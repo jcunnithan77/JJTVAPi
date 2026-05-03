@@ -61,6 +61,7 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
     '--ignore-errors',
     '--progress',
     '--newline',
+    '--extractor-args', 'youtube:player-client=web',
     '--ffmpeg-location', FFMPEG_PATH,
   ];
 
