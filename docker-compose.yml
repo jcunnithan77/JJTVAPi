@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  jjtv-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jjtv-server
+    restart: always
+    ports:
+      - "5000:5000"
+    volumes:
+      # Map your Ubuntu video directory here
+      - /mnt/media/videos:/app/videos
+      
+      # Persistence for the database and caches
+      - ./backend/jjtv_config.db:/app/jjtv_config.db
+      - ./backend/hls_cache:/app/hls_cache
+      
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MEDIA_PATH=/app/videos
+      - DB_PATH=/app/jjtv_config.db
+      - HLS_CACHE_PATH=/app/hls_cache
