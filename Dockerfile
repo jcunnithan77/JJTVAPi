@@ -26,14 +26,15 @@ COPY backend/static ./static
 
 # Set environment variables
 ENV NODE_ENV=production
-ENV PORT=5000
+ENV PORT=5001
 ENV MEDIA_PATH=/app/videos
+ENV STATIC_PATH=/app/static/browser
 # On Linux, we use the system-installed ffmpeg
 ENV FFMPEG_BIN=/usr/bin/ffmpeg
 ENV FFPROBE_BIN=/usr/bin/ffprobe
 
 # Expose the backend port
-EXPOSE 5000
+EXPOSE 5001
 
 # Start the server
 CMD ["node", "src/index.js"]

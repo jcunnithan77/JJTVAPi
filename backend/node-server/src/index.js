@@ -31,8 +31,8 @@ const PORT = process.env.PORT || 5000;
 // ─────────────────────────────────────────────────────────────
 // Configuration
 // ─────────────────────────────────────────────────────────────
-let MEDIA_PATH = path.join(__dirname, '..', '..', 'videos');
-const CONFIG_FILE = path.join(__dirname, '..', '..', 'config.json');
+let MEDIA_PATH = process.env.MEDIA_PATH || path.join(__dirname, '..', '..', 'videos');
+const CONFIG_FILE = process.env.CONFIG_PATH || path.join(__dirname, '..', '..', 'config.json');
 
 if (fs.existsSync(CONFIG_FILE)) {
   try {
@@ -66,7 +66,7 @@ adminRoutes.setMediaPath(MEDIA_PATH);
 // ─────────────────────────────────────────────────────────────
 
 // 1. Static Files (High Priority)
-const STATIC_PATH = path.join(__dirname, '..', '..', 'static', 'browser');
+const STATIC_PATH = process.env.STATIC_PATH || path.join(__dirname, '..', '..', 'static', 'browser');
 
 // Direct file access for logs
 app.get('/admin/logs', (req, res) => {
