@@ -78,7 +78,6 @@ app.use('/admin', express.static(STATIC_PATH));
 
 // 2. Redirects
 app.get('/', (req, res) => res.redirect('/admin/'));
-app.get('/admin', (req, res) => res.redirect('/admin/'));
 
 // 3. API Routes
 app.use('/', tvRoutes.router);
