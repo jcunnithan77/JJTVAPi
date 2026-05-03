@@ -14,6 +14,16 @@ const mime = require('mime-types');
 const db = require('../db');
 const logger = require('../logger');
 const { queueDownload, getActiveDownloads, getQueueSize } = require('../downloader');
+const { scanAll } = require('../scanner');
+
+let repairProcess = null;
+let repairLogs = [];
+const MAX_REPAIR_LOGS = 100;
+
+function addRepairLog(msg) {
+  repairLogs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  if (repairLogs.length > MAX_REPAIR_LOGS) repairLogs.shift();
+}
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm']);
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
@@ -247,6 +257,66 @@ router.delete('/admin-api/media/:playlist/:filename(*)', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Media Manager Controls
+// ─────────────────────────────────────────────────────────────
+
+router.post('/admin-api/media/scan', async (req, res) => {
+  console.log('[Admin-API] Manual scan triggered');
+  // Run in background
+  scanAll(MEDIA_PATH).catch(e => console.error('[Scanner] Manual scan error:', e));
+  res.json({ success: true, message: 'Scan started' });
+});
+
+router.get('/admin-api/media/repair-audio/status', (req, res) => {
+  res.json({
+    running: repairProcess !== null,
+    logs: repairLogs
+  });
+});
+
+router.post('/admin-api/media/repair-audio/start', (req, res) => {
+  if (repairProcess) return res.status(400).json({ error: 'Repair already running' });
+
+  console.log('[Admin-API] Starting repair audio process');
+  repairLogs = [];
+  addRepairLog('Starting repair process...');
+
+  const scriptPath = path.join(__dirname, '..', '..', '..', 'fix_audio.py');
+  
+  // Use python3 in Docker/Linux, python in Windows
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+  
+  repairProcess = spawn(pythonCmd, [scriptPath], {
+    env: { ...process.env, MEDIA_PATH }
+  });
+
+  repairProcess.stdout.on('data', (data) => {
+    const lines = data.toString().split('\n');
+    lines.forEach(line => line.trim() && addRepairLog(line));
+  });
+
+  repairProcess.stderr.on('data', (data) => {
+    addRepairLog(`ERROR: ${data.toString()}`);
+  });
+
+  repairProcess.on('close', (code) => {
+    addRepairLog(`Process exited with code ${code}`);
+    repairProcess = null;
+  });
+
+  res.json({ success: true });
+});
+
+router.post('/admin-api/media/repair-audio/stop', (req, res) => {
+  if (!repairProcess) return res.status(400).json({ error: 'Repair not running' });
+  
+  addRepairLog('Stopping repair process manually...');
+  repairProcess.kill();
+  repairProcess = null;
+  res.json({ success: true });
 });
 
 module.exports = { router, setMediaPath };

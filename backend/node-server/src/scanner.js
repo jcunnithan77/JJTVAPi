@@ -128,5 +128,5 @@ function formatDuration(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-module.exports = { startAutoScanner, scanFolder };
+module.exports = { startAutoScanner, scanFolder, scanAll };
 

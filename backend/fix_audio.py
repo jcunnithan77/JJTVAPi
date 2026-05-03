@@ -10,11 +10,6 @@ import io
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-# Ensure node is in PATH
-node_path = "C:\\Program Files\\nodejs"
-if node_path not in os.environ["PATH"]:
-    os.environ["PATH"] += os.pathsep + node_path
-
 def print_flush(msg):
     print(msg, flush=True)
     try:
@@ -23,10 +18,14 @@ def print_flush(msg):
     except:
         pass
 
-# Load config
+# Ensure binaries are found
+FFPROBE_PATH = os.environ.get('FFPROBE_BIN') or ('ffprobe.exe' if os.name == 'nt' else 'ffprobe')
+FFMPEG_PATH = os.environ.get('FFMPEG_BIN') or ('ffmpeg.exe' if os.name == 'nt' else 'ffmpeg')
 
-CONFIG_FILE = 'config.json'
-MEDIA_PATH = './videos'
+# Load config
+CONFIG_FILE = os.environ.get('CONFIG_PATH') or 'config.json'
+MEDIA_PATH = os.environ.get('MEDIA_PATH') or './videos'
+
 if os.path.exists(CONFIG_FILE):
     try:
         with open(CONFIG_FILE, 'r') as f:
@@ -35,9 +34,6 @@ if os.path.exists(CONFIG_FILE):
                 MEDIA_PATH = config_data['media_path']
     except Exception as e:
         print_flush(f"Error loading config.json: {e}")
-
-FFPROBE_PATH = os.environ.get('FFPROBE_BIN') or (os.path.join(os.getcwd(), 'ffprobe.exe') if os.name == 'nt' else 'ffprobe')
-FFMPEG_PATH = os.environ.get('FFMPEG_BIN') or (os.path.join(os.getcwd(), 'ffmpeg.exe') if os.name == 'nt' else 'ffmpeg')
 
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.webm'}
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
