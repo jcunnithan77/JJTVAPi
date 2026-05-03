@@ -1,0 +1,252 @@
+'use strict';
+
+/**
+ * Admin API Routes
+ */
+
+const express = require('express');
+const router = express.Router();
+const path = require('path');
+const fs = require('fs');
+const { spawn } = require('child_process');
+const { v4: uuidv4 } = require('uuid');
+const mime = require('mime-types');
+const db = require('../db');
+const logger = require('../logger');
+const { queueDownload, getActiveDownloads, getQueueSize } = require('../downloader');
+
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm']);
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
+
+let MEDIA_PATH = '';
+
+function setMediaPath(p) { MEDIA_PATH = p; }
+
+router.get('/admin-api/settings', async (req, res) => res.json(await db.getSettings()));
+
+router.post('/admin-api/settings', async (req, res) => {
+  for (const [k, v] of Object.entries(req.body || {})) await db.setSetting(k, v);
+  res.json(await db.getSettings());
+});
+
+router.get('/admin-api/schedules', async (req, res) => {
+  const scheduleMap = {};
+  const schedules = await db.getSchedules();
+  for (const row of schedules) {
+    scheduleMap[row.playlist] = { start_time: row.start_time, end_time: row.end_time };
+  }
+  try {
+    for (const item of fs.readdirSync(MEDIA_PATH)) {
+      if (fs.statSync(path.join(MEDIA_PATH, item)).isDirectory() && !scheduleMap[item]) {
+        scheduleMap[item] = { start_time: '', end_time: '' };
+      }
+    }
+  } catch { /* ignore */ }
+  res.json(scheduleMap);
+});
+
+router.post('/admin-api/schedules', async (req, res) => {
+  const { playlist, start_time, end_time } = req.body || {};
+  await db.upsertSchedule(playlist, start_time || '', end_time || '');
+  res.json({ success: true });
+});
+
+router.delete('/admin-api/schedules/:playlist(*)', async (req, res) => {
+  await db.deleteSchedule(req.params.playlist);
+  res.json({ success: true });
+});
+
+router.get('/admin-api/overlay', async (req, res) => res.json(await db.getOverlay()));
+
+router.post('/admin-api/overlay', async (req, res) => {
+  const allowed = new Set(['enabled', 'banner_text', 'music_url', 'music_volume', 'banner_position', 'banner_color']);
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (allowed.has(k)) await db.setOverlay(k, v);
+  }
+  res.json({ success: true });
+});
+
+router.post('/admin-api/download', async (req, res) => {
+  const { url, playlist = 'Downloads' } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'URL required' });
+  const jobId = String(Date.now());
+  queueDownload(jobId, url, playlist, MEDIA_PATH);
+  res.json({ success: true, job_id: jobId });
+});
+
+router.get('/admin-api/download/scheduled', async (req, res) => {
+  res.json(await db.getScheduledDownloads());
+});
+
+router.post('/admin-api/download/scheduled', async (req, res) => {
+  const { url, playlist, scheduled_at } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'URL required' });
+  if (!playlist) return res.status(400).json({ error: 'Playlist name required' });
+  if (!scheduled_at) return res.status(400).json({ error: 'scheduled_at required (ISO format)' });
+
+  const runAt = new Date(scheduled_at);
+  if (isNaN(runAt.getTime())) return res.status(400).json({ error: 'Invalid datetime format' });
+  if (runAt <= new Date()) return res.status(400).json({ error: 'Scheduled time must be in the future' });
+
+  const id = uuidv4().slice(0, 8);
+  await db.createScheduledDownload(id, url, playlist, scheduled_at);
+  res.json({ success: true, id, scheduled_at });
+});
+
+router.delete('/admin-api/download/scheduled/:jobId', async (req, res) => {
+  await db.cancelScheduledDownload(req.params.jobId);
+  res.json({ success: true });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Logs
+// ─────────────────────────────────────────────────────────────
+router.get('/admin-api/logs', (req, res) => {
+  res.json(logger.getRecentLogs());
+});
+
+router.get('/admin-api/logs/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Send recent history first
+  const history = logger.getRecentLogs();
+  for (const line of history) {
+    res.write(`data: ${JSON.stringify({ message: line })}\n\n`);
+  }
+
+  const logHandler = (msg) => {
+    res.write(`data: ${JSON.stringify({ message: msg })}\n\n`);
+  };
+
+  logger.onLog(logHandler);
+
+  req.on('close', () => {
+    logger.offLog(logHandler);
+  });
+});
+
+router.get('/admin-api/youtube/search', (req, res) => {
+  const q = (req.query.q || '').trim();
+  const limit = parseInt(req.query.limit || '10', 10);
+  if (!q) return res.status(400).json({ error: 'Query required' });
+
+  const ytdlp = spawn('yt-dlp', [
+    `ytsearch${limit}:${q}`,
+    '--flat-playlist',
+    '--no-warnings',
+    '--print-json',
+  ]);
+
+  let output = '';
+  let errOutput = '';
+  ytdlp.stdout.on('data', d => { output += d.toString(); });
+  ytdlp.stderr.on('data', d => { errOutput += d.toString(); });
+
+  ytdlp.on('close', (code) => {
+    if (code !== 0 && !output) {
+      return res.status(500).json({ error: errOutput.slice(-300) || 'yt-dlp error' });
+    }
+
+    const results = [];
+    for (const line of output.trim().split('\n')) {
+      try {
+        const entry = JSON.parse(line);
+        const id = entry.id || '';
+        const dur = entry.duration;
+        results.push({
+          id,
+          title: entry.title || 'Unknown',
+          channel: entry.uploader || entry.channel || '',
+          duration: dur ? _fmtDuration(dur) : '',
+          thumbnail: entry.thumbnail || `https://img.youtube.com/vi/${id}/mqdefault.jpg`,
+          url: entry.url || entry.webpage_url || `https://www.youtube.com/watch?v={id}`,
+          view_count: entry.view_count || 0,
+        });
+      } catch { /* skip */ }
+    }
+    res.json(results);
+  });
+});
+
+function _fmtDuration(seconds) {
+  if (!seconds) return '';
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}` : `${m}:${String(sec).padStart(2,'0')}`;
+}
+
+router.get('/admin-api/stats', async (req, res) => {
+  try {
+    const { execSync } = require('child_process');
+    let total = 0, free = 0;
+    try {
+      const out = execSync(`wmic logicaldisk where "DeviceID='D:'" get Size,FreeSpace /value`, { encoding: 'utf8' });
+      const freeMatch = out.match(/FreeSpace=(\d+)/);
+      const sizeMatch = out.match(/Size=(\d+)/);
+      if (freeMatch) free = parseInt(freeMatch[1]);
+      if (sizeMatch) total = parseInt(sizeMatch[1]);
+    } catch { /* ignore */ }
+    const used = total - free;
+    res.json({
+      disk: {
+        total_gb: total ? +(total / 1e9).toFixed(2) : null,
+        used_gb: total ? +(used / 1e9).toFixed(2) : null,
+        free_gb: total ? +(free / 1e9).toFixed(2) : null,
+        percent_used: total ? +((used / total) * 100).toFixed(1) : null,
+      },
+      downloads: getActiveDownloads(),
+      queue_size: getQueueSize(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/admin-api/media', async (req, res) => {
+  const result = [];
+  try {
+    const playlists = await db.getCachedPlaylists();
+    for (const p of playlists) {
+      const videos = await db.getCachedVideos(p.name);
+      result.push({
+        playlist: p.name,
+        videos: videos.map(v => ({
+          filename: v.filename,
+          title: v.title,
+          size_mb: v.size_mb,
+          thumbnail: v.thumbnail,
+          vpath: v.vpath,
+          playlist: v.playlist,
+          duration: v.duration
+        }))
+
+      });
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/admin-api/media/:playlist/:filename(*)', async (req, res) => {
+  const videoPath = path.join(MEDIA_PATH, req.params.playlist, req.params.filename);
+  if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'File not found' });
+  try {
+    fs.unlinkSync(videoPath);
+    const base = videoPath.replace(/\.[^.]+$/, '');
+    for (const ext of IMAGE_EXTENSIONS) {
+      const tp = base + ext;
+      if (fs.existsSync(tp)) { fs.unlinkSync(tp); break; }
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+module.exports = { router, setMediaPath };
