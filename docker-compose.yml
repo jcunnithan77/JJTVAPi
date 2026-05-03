@@ -11,7 +11,7 @@ services:
       - "5001:5001"
     volumes:
       # Map your Ubuntu video directory here
-      - /mnt/media/videos:/media/usb/Blippi/downloads
+      - /media/usb/Blippi/downloads:/app/videos
 
       # Persistence for the database and caches
       - ./backend/jjtv_config.db:/app/jjtv_config.db
