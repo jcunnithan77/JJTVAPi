@@ -28,7 +28,7 @@ let isScanning = false;
 async function scanAll(mediaPath) {
   if (isScanning) return;
   isScanning = true;
-  console.log('[Scanner] Starting full disk scan...');
+  console.log(`[Scanner] Starting full disk scan in: ${mediaPath}`);
 
   try {
     const folders = fs.readdirSync(mediaPath).filter(item => {
