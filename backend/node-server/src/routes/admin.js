@@ -284,7 +284,11 @@ router.post('/admin-api/media/repair-audio/start', (req, res) => {
   repairLogs = [];
   addRepairLog('Starting repair process...');
 
-  const scriptPath = path.join(__dirname, '..', '..', '..', 'fix_audio.py');
+  let scriptPath = path.join(__dirname, '..', '..', '..', 'fix_audio.py');
+  // Fallback for Docker environment structure
+  if (!fs.existsSync(scriptPath)) {
+    scriptPath = path.join(__dirname, '..', '..', 'fix_audio.py');
+  }
   
   // Use python3 in Docker/Linux, python in Windows
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
