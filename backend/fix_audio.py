@@ -11,7 +11,14 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
 def print_flush(msg):
-    print(msg, flush=True)
+    try:
+        # Handle surrogate characters by encoding/decoding with replace
+        if isinstance(msg, str):
+            msg = msg.encode('utf-8', errors='replace').decode('utf-8')
+        print(msg, flush=True)
+    except:
+        pass
+
     try:
         with open("fix_audio.log", "a", encoding="utf-8") as f:
             f.write(msg + "\n")
@@ -56,8 +63,9 @@ def has_audio(filepath):
         filepath
     ]
     try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        exists = len(result.stdout.strip()) > 0
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False)
+        output = result.stdout.decode('utf-8', errors='replace').strip()
+        exists = len(output) > 0
         try:
             with open(cache_file, 'w') as f:
                 f.write(str(exists))
@@ -80,7 +88,7 @@ def search_youtube(query, video_id=None):
         'skip_download': True,
         'js_runtimes': {'node': {}},
         'remote_components': ['ejs:github'],
-        'extractor_args': {'youtube': {'player_client': ['ios', 'android', 'web']}},
+        'extractor_args': {'youtube': {'player_client': ['web']}},
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -101,7 +109,7 @@ def download_audio_and_thumb(url, output_base, thumb_needed):
         'writethumbnail': thumb_needed,
         'js_runtimes': {'node': {}},
         'remote_components': ['ejs:github'],
-        'extractor_args': {'youtube': {'player_client': ['ios', 'android', 'web']}},
+        'extractor_args': {'youtube': {'player_client': ['web']}},
         'postprocessors': [
             {
                 'key': 'FFmpegExtractAudio',
