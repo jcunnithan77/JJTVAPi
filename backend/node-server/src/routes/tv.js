@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
 const db = require('../db');
-const { registerVideo, getOrCreateHls, HLS_CACHE_PATH } = require('../hls');
+const { registerVideo, getOrCreateHls, HLS_CACHE_PATH, getVideoPath } = require('../hls');
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm']);
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.JPG', '.PNG', '.JPEG', '.WEBP'];
@@ -92,7 +92,7 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       return {
         filename: v.filename,
         title: v.title,
-        url: `/stream/${encodeURIComponent(playlistId)}/${encodeURIComponent(v.filename)}`,
+        url: `/stream/hash/${v.vhash}`,
         hls_url: `/hls/stream/${v.vhash}/index.m3u8`,
         thumbnail: v.thumbnail,
         duration: v.duration,
@@ -129,7 +129,7 @@ router.get('/api/search', async (req, res) => {
         duration: v.duration || '',
         size_mb: v.size_mb,
         thumbnail: v.thumbnail || '',
-        url: `/stream/${encodeURIComponent(v.playlist)}/${encodeURIComponent(v.filename)}`,
+        url: `/stream/hash/${v.vhash}`,
         hls_url: `/hls/stream/${v.vhash}/index.m3u8`,
       });
     }
@@ -163,6 +163,26 @@ router.get('/stream/:playlist/:file', async (req, res) => {
   if (!fs.existsSync(videoPath)) {
     console.warn(`[TV-API] 404: File not found at ${videoPath}`);
     return res.status(404).send('Not found');
+  }
+
+  const mimeType = mime.lookup(videoPath) || 'video/mp4';
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Accept-Ranges', 'bytes');
+
+  res.sendFile(videoPath, err => {
+    if (err && !res.headersSent) res.status(500).send('Stream error');
+  });
+});
+
+// Robust hash-based streaming (handles special characters like ?, #, etc)
+router.get('/stream/hash/:hash', async (req, res) => {
+  const { hash } = req.params;
+  console.log(`[TV-API] GET /stream/hash/${hash} from ${req.ip}`);
+
+  const videoPath = getVideoPath(hash);
+  if (!videoPath || !fs.existsSync(videoPath)) {
+    console.warn(`[TV-API] 404: Video hash ${hash} not found or file missing.`);
+    return res.status(404).send('Video not found.');
   }
 
   const mimeType = mime.lookup(videoPath) || 'video/mp4';

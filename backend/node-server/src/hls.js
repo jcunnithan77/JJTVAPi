@@ -171,4 +171,8 @@ function cleanupOldCache() {
 // Run cleanup every 30 minutes
 setInterval(cleanupOldCache, 30 * 60 * 1000);
 
-module.exports = { hashVideoPath, registerVideo, getOrCreateHls, HLS_CACHE_PATH };
+function getVideoPath(hash) {
+  return videoHashMap.get(hash);
+}
+
+module.exports = { hashVideoPath, registerVideo, getOrCreateHls, HLS_CACHE_PATH, getVideoPath };

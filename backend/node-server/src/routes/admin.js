@@ -247,6 +247,8 @@ router.get('/admin-api/media', async (req, res) => {
           size_mb: v.size_mb,
           thumbnail: v.thumbnail,
           vpath: v.vpath,
+          vhash: v.vhash,
+          url: `/stream/hash/${v.vhash}`,
           playlist: v.playlist,
           duration: v.duration
         }))
