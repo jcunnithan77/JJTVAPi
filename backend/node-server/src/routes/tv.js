@@ -160,7 +160,10 @@ router.get('/stream/:playlist/:file', async (req, res) => {
   if (await db.isSystemAsleep() || !await db.isPlaylistAllowed(playlistId)) return res.status(403).send('Forbidden');
 
   const videoPath = path.join(MEDIA_PATH, playlistId, req.params.file);
-  if (!fs.existsSync(videoPath)) return res.status(404).send('Not found');
+  if (!fs.existsSync(videoPath)) {
+    console.warn(`[TV-API] 404: File not found at ${videoPath}`);
+    return res.status(404).send('Not found');
+  }
 
   const mimeType = mime.lookup(videoPath) || 'video/mp4';
   res.setHeader('Content-Type', mimeType);

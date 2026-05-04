@@ -99,7 +99,7 @@ function startHlsConversion(videoPath, cacheDir) {
         console.log(`[HLS] Conversion complete: ${path.basename(videoPath)}`);
         resolve(true);
       } else {
-        console.error(`[HLS] FFmpeg error (${code}): ${stderr.slice(-500)}`);
+        console.error(`[HLS] FFmpeg error (${code}) for file ${videoPath}: ${stderr.slice(-500)}`);
         reject(new Error(`FFmpeg exited with code ${code}`));
       }
     });

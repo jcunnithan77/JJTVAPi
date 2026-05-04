@@ -10,7 +10,8 @@ services:
     ports:
       - "5001:5001"
     volumes:
-      # Map your Ubuntu video directory here
+      # Map your Ubuntu video directory here. 
+      # IMPORTANT: Verify this path exists on Ubuntu with 'ls -R /media/usb/Blippi/downloads'
       - /media/usb/Blippi/downloads:/app/videos
 
       # Persistence for the database and caches

@@ -194,13 +194,29 @@ router.get('/admin-api/stats', async (req, res) => {
   try {
     const { execSync } = require('child_process');
     let total = 0, free = 0;
-    try {
-      const out = execSync(`wmic logicaldisk where "DeviceID='D:'" get Size,FreeSpace /value`, { encoding: 'utf8' });
-      const freeMatch = out.match(/FreeSpace=(\d+)/);
-      const sizeMatch = out.match(/Size=(\d+)/);
-      if (freeMatch) free = parseInt(freeMatch[1]);
-      if (sizeMatch) total = parseInt(sizeMatch[1]);
-    } catch { /* ignore */ }
+    
+    if (process.platform === 'win32') {
+      try {
+        const out = execSync(`wmic logicaldisk where "DeviceID='D:'" get Size,FreeSpace /value`, { encoding: 'utf8' });
+        const freeMatch = out.match(/FreeSpace=(\d+)/);
+        const sizeMatch = out.match(/Size=(\d+)/);
+        if (freeMatch) free = parseInt(freeMatch[1]);
+        if (sizeMatch) total = parseInt(sizeMatch[1]);
+      } catch { /* ignore */ }
+    } else {
+      // Linux/Docker: Check the mount point of MEDIA_PATH
+      try {
+        const out = execSync(`df -B1 "${MEDIA_PATH}" | tail -n 1`, { encoding: 'utf8' });
+        const parts = out.split(/\s+/);
+        if (parts.length >= 4) {
+          total = parseInt(parts[1]); // 1-indexed (Filesystem, 1K-blocks/Bytes, Used, Available)
+          free = parseInt(parts[3]);
+        }
+      } catch (e) {
+        console.error('[Admin-API] Error getting Linux stats:', e.message);
+      }
+    }
+
     const used = total - free;
     res.json({
       disk: {
