@@ -179,7 +179,18 @@ router.get('/stream/hash/:hash', async (req, res) => {
   const { hash } = req.params;
   console.log(`[TV-API] GET /stream/hash/${hash} from ${req.ip}`);
 
-  const videoPath = getVideoPath(hash);
+  // 1. Check in-memory map first (fast)
+  let videoPath = getVideoPath(hash);
+  
+  // 2. Fallback to database (persistent)
+  if (!videoPath) {
+    videoPath = await db.getVideoPathByHash(hash);
+    if (videoPath) {
+      // Re-register in map for future fast lookups
+      registerVideo(videoPath);
+    }
+  }
+
   if (!videoPath || !fs.existsSync(videoPath)) {
     console.warn(`[TV-API] 404: Video hash ${hash} not found or file missing.`);
     return res.status(404).send('Video not found.');
@@ -199,6 +210,12 @@ router.get('/hls/stream/:hash/index.m3u8', async (req, res) => {
   console.log(`[TV-API] GET HLS Manifest for hash: ${hash} from ${req.ip}`);
 
   try {
+    // Ensure it's in the hash map (fallback to DB)
+    if (!getVideoPath(hash)) {
+      const vpath = await db.getVideoPathByHash(hash);
+      if (vpath) registerVideo(vpath);
+    }
+
     const cacheDir = await getOrCreateHls(hash);
     if (!cacheDir) return res.status(404).send('Video not registered.');
     const manifestPath = path.join(cacheDir, 'index.m3u8');

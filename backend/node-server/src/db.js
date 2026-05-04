@@ -176,10 +176,17 @@ async function isPlaylistAllowed(name) {
   return startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
 }
 
+async function getVideoPathByHash(hash) {
+  const db = await getDb();
+  const row = await db.get(`SELECT vpath FROM media_cache WHERE vhash = ?`, [hash]);
+  return row ? row.vpath : null;
+}
+
 module.exports = {
   initDb, getSettings, setSetting, getOverlay, setOverlay,
   getSchedules, upsertSchedule, deleteSchedule,
   getScheduledDownloads, createScheduledDownload, updateScheduledDownloadStatus, cancelScheduledDownload,
   updateMediaCache, getCachedPlaylists, getCachedVideos, clearOldCache,
+  getVideoPathByHash,
   isSystemAsleep, isPlaylistAllowed,
 };
