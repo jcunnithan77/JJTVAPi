@@ -51,11 +51,11 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
   activeDownloads[jobId] = { status: 'downloading', percent: 0, title: 'Initializing...', playlist };
 
   const ytdlpArgs = [
-    url,
     '-f', 'bv*+ba/b',
     '-S', 'ext:mp4:m4a',
-    '-o', path.join(targetDir, '%(uploader|Unknown)s', '%(playlist_title|Misc)s', '%(id)s.%(ext)s'),
     '--merge-output-format', 'mp4',
+    '--no-check-certificate',
+    '-o', path.join(targetDir, '%(uploader|Unknown)s', '%(playlist_title|Misc)s', '%(id)s.%(ext)s'),
     '--write-thumbnail',
     '--convert-thumbnails', 'jpg',
     '--write-info-json',
@@ -63,8 +63,9 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
     '--ignore-errors',
     '--progress',
     '--newline',
-    '--extractor-args', 'youtube:player-client=web',
+    '--extractor-args', 'youtube:player-client=web,mweb',
     '--ffmpeg-location', FFMPEG_PATH,
+    url
   ];
 
   console.log(`[Downloader] Starting: yt-dlp ${ytdlpArgs.join(' ')}`);
