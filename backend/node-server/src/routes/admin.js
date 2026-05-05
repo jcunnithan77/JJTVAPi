@@ -138,27 +138,49 @@ router.get('/admin-api/logs/stream', (req, res) => {
   });
 });
 
-router.get('/admin-api/youtube/search', (req, res) => {
+router.get('/admin-api/youtube/search', async (req, res) => {
   const q = (req.query.q || '').trim();
-  const limit = parseInt(req.query.limit || '10', 10);
+  const limit = parseInt(req.query.limit || '15', 10);
   if (!q) return res.status(400).json({ error: 'Query required' });
 
-  // If query is a URL, don't use ytsearch, just pass the URL
   const isUrl = q.startsWith('http://') || q.startsWith('https://');
-  const searchArg = isUrl ? q : `ytsearch${limit}:${q}`;
 
+  if (!isUrl) {
+    try {
+      const ytSearch = require('yt-search');
+      const r = await ytSearch(q);
+      const results = r.all.slice(0, limit).map(entry => {
+        let title = entry.title || entry.name || 'Unknown';
+        let channel = entry.author?.name || entry.name || '';
+        let type = entry.type || 'video';
+        let url = entry.url || '';
+        if (url.startsWith('/')) url = 'https://youtube.com' + url;
+
+        return {
+          id: entry.videoId || entry.listId || entry.id || '',
+          title,
+          channel,
+          type, // 'video', 'list', 'channel'
+          duration: entry.timestamp || '',
+          thumbnail: entry.image || entry.thumbnail || `https://via.placeholder.com/160x90/1a1a24/888?text=No+Thumb`,
+          url,
+          view_count: entry.views || entry.subCount || entry.videoCount || 0,
+        };
+      });
+      return res.json(results);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // If query is a URL, use yt-dlp to extract its contents
   const ytdlpArgs = [
-    searchArg,
+    q,
     '--flat-playlist',
     '--no-warnings',
     '--print-json',
+    '--playlist-end', String(limit * 5)
   ];
-  
-  if (isUrl) {
-    // For channels/playlists, we might want to limit the results if it's huge, 
-    // but --flat-playlist is fast. We can add a playlist end limit just in case.
-    ytdlpArgs.push('--playlist-end', String(limit * 5)); // Allow more results for playlists
-  }
 
   const ytdlp = spawn('yt-dlp', ytdlpArgs);
 
@@ -182,14 +204,15 @@ router.get('/admin-api/youtube/search', (req, res) => {
           id,
           title: entry.title || 'Unknown',
           channel: entry.uploader || entry.channel || '',
+          type: 'video', // yt-dlp flat-playlist returns videos
           duration: dur ? _fmtDuration(dur) : '',
           thumbnail: entry.thumbnail || `https://img.youtube.com/vi/${id}/mqdefault.jpg`,
-          url: entry.url || entry.webpage_url || `https://www.youtube.com/watch?v={id}`,
+          url: entry.url || entry.webpage_url || `https://www.youtube.com/watch?v=${id}`,
           view_count: entry.view_count || 0,
         });
       } catch { /* skip */ }
     }
-    res.json(results);
+    res.json(results.slice(0, limit));
   });
 });
 
