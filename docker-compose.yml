@@ -17,6 +17,7 @@ services:
       # Persistence for the database and caches
       - ./backend/jjtv_config.db:/app/jjtv_config.db
       - ./backend/hls_cache:/app/hls_cache
+      - ./backend/static:/app/static
 
     environment:
       - NODE_ENV=production
