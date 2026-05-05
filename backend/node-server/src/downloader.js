@@ -52,7 +52,8 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
 
   const ytdlpArgs = [
     url,
-    '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+    '-f', 'bv*+ba/b',
+    '-S', 'ext:mp4:m4a',
     '-o', path.join(targetDir, '%(uploader|Unknown)s', '%(playlist_title|Misc)s', '%(id)s.%(ext)s'),
     '--merge-output-format', 'mp4',
     '--write-thumbnail',
@@ -65,6 +66,8 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
     '--extractor-args', 'youtube:player-client=web',
     '--ffmpeg-location', FFMPEG_PATH,
   ];
+
+  console.log(`[Downloader] Starting: yt-dlp ${ytdlpArgs.join(' ')}`);
 
   return new Promise((resolve) => {
     const proc = spawn('yt-dlp', ytdlpArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
