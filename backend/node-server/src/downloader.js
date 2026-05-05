@@ -64,10 +64,17 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
     '--progress',
     '--newline',
     '--no-playlist',
-    '--extractor-args', 'youtube:player-client=web,mweb,ios,android',
-    '--ffmpeg-location', FFMPEG_PATH,
-    url
+    '--extractor-args', 'youtube:player-client=ios,android,mweb,web',
+    '--ffmpeg-location', FFMPEG_PATH
   ];
+
+  // Optional: Use cookies.txt if provided in the backend folder
+  const cookiesPath = path.join(__dirname, '..', '..', 'cookies.txt');
+  if (fs.existsSync(cookiesPath)) {
+    ytdlpArgs.push('--cookies', cookiesPath);
+  }
+
+  ytdlpArgs.push(url);
 
   console.log(`[Downloader] Starting: yt-dlp ${ytdlpArgs.join(' ')}`);
 
