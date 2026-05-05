@@ -20,6 +20,7 @@ RUN npm install --production
 # Copy Python requirements and install
 COPY backend/requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
+RUN pip3 install -U yt-dlp --break-system-packages
 
 # Copy backend source code
 COPY backend/node-server/src ./src
