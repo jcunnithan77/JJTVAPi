@@ -31,9 +31,25 @@ async function scanAll(mediaPath) {
   console.log(`[Scanner] Starting full disk scan in: ${mediaPath}`);
 
   try {
-    const folders = fs.readdirSync(mediaPath).filter(item => {
-      try { return fs.statSync(path.join(mediaPath, item)).isDirectory(); } catch { return false; }
-    });
+    const foldersWithVideos = new Set();
+    
+    function walk(dir, relPath = '') {
+      try {
+        const items = fs.readdirSync(dir, { withFileTypes: true });
+        let hasVideo = false;
+        for (const item of items) {
+          if (item.isDirectory()) {
+            walk(path.join(dir, item.name), path.join(relPath, item.name));
+          } else if (item.isFile() && VIDEO_EXTENSIONS.has(path.extname(item.name).toLowerCase())) {
+            hasVideo = true;
+          }
+        }
+        if (hasVideo) foldersWithVideos.add(relPath || '.');
+      } catch { /* ignore permission errors */ }
+    }
+
+    walk(mediaPath);
+    const folders = Array.from(foldersWithVideos);
 
     for (const folder of folders) {
       await scanFolder(mediaPath, folder);
@@ -107,7 +123,10 @@ async function scanFolder(mediaPath, folderName) {
       if (possibleThumbs.length > 0) {
         // Prefer the one that matches exactly or is .temp.temp.jpg
         const bestThumb = possibleThumbs.find(t => t.includes('.temp.temp') || t.startsWith(v)) || possibleThumbs[0];
-        thumb = `/images/${encodeURIComponent(folderName)}/${encodeURIComponent(bestThumb)}`;
+        
+        // Encode each path segment individually so slashes are preserved
+        const safeFolder = folderName.split(/[/\\]/).map(encodeURIComponent).join('/');
+        thumb = `/images/${safeFolder}/${encodeURIComponent(bestThumb)}`;
       }
 
       const hash = hashVideoPath(vPath);

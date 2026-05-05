@@ -142,9 +142,14 @@ router.get('/api/search', async (req, res) => {
 
 router.get('/api/overlay', async (req, res) => res.json(await db.getOverlay()));
 
-router.get('/images/:playlist/:file', (req, res) => {
-  console.log(`[TV-API] GET /images/${req.params.playlist}/${req.params.file}`);
-  const imgPath = path.join(MEDIA_PATH, req.params.playlist, req.params.file);
+router.get('/images/*', (req, res) => {
+  const filePath = req.params[0];
+  console.log(`[TV-API] GET /images/${filePath}`);
+  
+  // filePath is something like "Downloads/Blippi/Misc/video.jpg"
+  // Decode it in case there are %20 spaces
+  const decodedPath = decodeURIComponent(filePath);
+  const imgPath = path.join(MEDIA_PATH, decodedPath);
 
   if (!fs.existsSync(imgPath)) return res.status(404).send('Not found');
   const mimeType = mime.lookup(imgPath) || 'image/jpeg';
@@ -184,13 +189,20 @@ router.get('/stream/hash/:hash', async (req, res) => {
   });
 });
 
-router.get('/stream/:playlist/:file', async (req, res) => {
-  const playlistId = req.params.playlist;
-  console.log(`[TV-API] GET /stream/${playlistId}/${req.params.file} from ${req.ip}`);
+router.get('/stream/*', async (req, res) => {
+  // Ignore hash routes which are matched above
+  if (req.params[0].startsWith('hash/')) return res.status(404).send('Not found');
+
+  const filePath = req.params[0];
+  const decodedPath = decodeURIComponent(filePath);
+  
+  // Try to extract playlistId from the first segment if needed for permissions
+  const playlistId = decodedPath.split('/')[0];
+  console.log(`[TV-API] GET /stream/${decodedPath} from ${req.ip}`);
 
   if (await db.isSystemAsleep() || !await db.isPlaylistAllowed(playlistId)) return res.status(403).send('Forbidden');
 
-  const videoPath = path.join(MEDIA_PATH, playlistId, req.params.file);
+  const videoPath = path.join(MEDIA_PATH, decodedPath);
   if (!fs.existsSync(videoPath)) {
     console.warn(`[TV-API] 404: File not found at ${videoPath}`);
     return res.status(404).send('Not found');

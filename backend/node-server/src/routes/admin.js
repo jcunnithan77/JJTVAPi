@@ -160,6 +160,7 @@ router.get('/admin-api/youtube/search', async (req, res) => {
           id: entry.videoId || entry.listId || entry.id || '',
           title,
           channel,
+          channel_url: entry.author?.url || '',
           type, // 'video', 'list', 'channel'
           duration: entry.timestamp || '',
           thumbnail: entry.image || entry.thumbnail || `https://via.placeholder.com/160x90/1a1a24/888?text=No+Thumb`,
@@ -204,6 +205,7 @@ router.get('/admin-api/youtube/search', async (req, res) => {
           id,
           title: entry.title || 'Unknown',
           channel: entry.uploader || entry.channel || '',
+          channel_url: entry.uploader_url || entry.channel_url || '',
           type: 'video', // yt-dlp flat-playlist returns videos
           duration: dur ? _fmtDuration(dur) : '',
           thumbnail: entry.thumbnail || `https://img.youtube.com/vi/${id}/mqdefault.jpg`,

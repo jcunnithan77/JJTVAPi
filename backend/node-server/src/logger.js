@@ -13,6 +13,7 @@ const LOG_FILE = path.join(__dirname, '..', '..', 'jjtv_node.log');
 const MAX_MEMORY_LINES = 500;
 const logBuffer = [];
 const emitter = new EventEmitter();
+emitter.setMaxListeners(50); // Prevent MaxListeners warning for SSE connections
 
 // Clear log file on startup
 fs.writeFileSync(LOG_FILE, '');
