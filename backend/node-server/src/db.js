@@ -147,7 +147,10 @@ async function getCachedVideos(playlist) {
 async function clearOldCache(playlist) {
   const db = await getDb();
   // We can't easily do a "last_seen" cleanup without a full scan, but we can delete a playlist before re-scanning
-  await db.run(`DELETE FROM media_cache WHERE playlist = ?`, [playlist]);
+  const res = await db.run(`DELETE FROM media_cache WHERE playlist = ?`, [playlist]);
+  if (res.changes > 0) {
+    console.log(`[DB] Deleted ${res.changes} rows for playlist: ${playlist}`);
+  }
 }
 
 function _parseMins(str) {

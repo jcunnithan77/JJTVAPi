@@ -116,7 +116,9 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
       if (code !== 0 && lastError) {
         // Find the actual error line to make it cleaner for the UI
         const errLines = lastError.split('\n').filter(l => l.toLowerCase().includes('error:'));
-        activeDownloads[jobId].error_msg = errLines.length > 0 ? errLines[errLines.length - 1].trim() : lastError.trim().split('\n').pop();
+        const finalMsg = errLines.length > 0 ? errLines[errLines.length - 1].trim() : lastError.trim().split('\n').pop();
+        activeDownloads[jobId].error_msg = finalMsg;
+        console.error(`[Downloader] Job failed (${url}):`, finalMsg);
       }
       
       // Trigger scan of the folder to update database cache

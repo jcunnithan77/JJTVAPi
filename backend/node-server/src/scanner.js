@@ -59,7 +59,6 @@ async function scanAll(mediaPath) {
     const cachedPlaylists = await db.getCachedPlaylists();
     for (const cached of cachedPlaylists) {
       if (!folders.includes(cached.name)) {
-        console.log(`[Scanner] Removing deleted folder from DB: ${cached.name}`);
         await db.clearOldCache(cached.name);
       }
     }
