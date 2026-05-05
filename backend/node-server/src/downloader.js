@@ -90,7 +90,11 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
       }
     });
 
-    proc.stderr.on('data', (d) => { /* suppress yt-dlp warnings */ });
+    let lastError = '';
+    proc.stderr.on('data', (d) => {
+      lastError += d.toString();
+      if (lastError.length > 500) lastError = lastError.slice(-500);
+    });
 
     proc.on('close', (code) => {
       // Assign default thumbnails to any video that lacks one
@@ -109,6 +113,11 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
       } catch { /* ignore */ }
 
       activeDownloads[jobId].status = code === 0 ? 'completed' : 'error';
+      if (code !== 0 && lastError) {
+        // Find the actual error line to make it cleaner for the UI
+        const errLines = lastError.split('\n').filter(l => l.toLowerCase().includes('error:'));
+        activeDownloads[jobId].error_msg = errLines.length > 0 ? errLines[errLines.length - 1].trim() : lastError.trim().split('\n').pop();
+      }
       
       // Trigger scan of the folder to update database cache
       if (code === 0) {

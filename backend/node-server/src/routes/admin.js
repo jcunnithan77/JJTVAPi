@@ -192,6 +192,8 @@ router.get('/admin-api/youtube/search', async (req, res) => {
     '--playlist-end', String(limit * 5)
   ];
 
+  const isPlaylistsUrl = isUrl && q.includes('/playlists');
+
   const ytdlp = spawn('yt-dlp', ytdlpArgs);
 
   let output = '';
@@ -215,7 +217,7 @@ router.get('/admin-api/youtube/search', async (req, res) => {
           title: entry.title || 'Unknown',
           channel: entry.uploader || entry.channel || '',
           channel_url: entry.uploader_url || entry.channel_url || '',
-          type: 'video', // yt-dlp flat-playlist returns videos
+          type: isPlaylistsUrl ? 'list' : 'video', // yt-dlp flat-playlist returns playlists or videos
           duration: dur ? _fmtDuration(dur) : '',
           thumbnail: entry.thumbnail || `https://img.youtube.com/vi/${id}/mqdefault.jpg`,
           url: entry.url || entry.webpage_url || `https://www.youtube.com/watch?v=${id}`,
