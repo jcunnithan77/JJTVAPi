@@ -27,6 +27,12 @@ function setupLogger() {
     originalLog.apply(console, args);
   };
 
+  console.warn = (...args) => {
+    const msg = `[${new Date().toLocaleTimeString()}] WARN: ${args.join(' ')}`;
+    _log(msg);
+    originalLog.apply(console, args);
+  };
+
   console.error = (...args) => {
     const msg = `[${new Date().toLocaleTimeString()}] ERROR: ${args.join(' ')}`;
     _log(msg);

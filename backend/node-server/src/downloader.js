@@ -53,10 +53,11 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
   const ytdlpArgs = [
     url,
     '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    '-o', path.join(targetDir, '%(title)s.%(ext)s'),
+    '-o', path.join(targetDir, '%(id)s.%(ext)s'),
     '--merge-output-format', 'mp4',
     '--write-thumbnail',
     '--convert-thumbnails', 'jpg',
+    '--write-info-json',
     '--no-overwrites',
     '--ignore-errors',
     '--progress',

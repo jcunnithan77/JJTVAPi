@@ -143,12 +143,24 @@ router.get('/admin-api/youtube/search', (req, res) => {
   const limit = parseInt(req.query.limit || '10', 10);
   if (!q) return res.status(400).json({ error: 'Query required' });
 
-  const ytdlp = spawn('yt-dlp', [
-    `ytsearch${limit}:${q}`,
+  // If query is a URL, don't use ytsearch, just pass the URL
+  const isUrl = q.startsWith('http://') || q.startsWith('https://');
+  const searchArg = isUrl ? q : `ytsearch${limit}:${q}`;
+
+  const ytdlpArgs = [
+    searchArg,
     '--flat-playlist',
     '--no-warnings',
     '--print-json',
-  ]);
+  ];
+  
+  if (isUrl) {
+    // For channels/playlists, we might want to limit the results if it's huge, 
+    // but --flat-playlist is fast. We can add a playlist end limit just in case.
+    ytdlpArgs.push('--playlist-end', String(limit * 5)); // Allow more results for playlists
+  }
+
+  const ytdlp = spawn('yt-dlp', ytdlpArgs);
 
   let output = '';
   let errOutput = '';

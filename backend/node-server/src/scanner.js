@@ -64,6 +64,25 @@ async function scanFolder(mediaPath, folderName) {
       const ext = path.extname(v);
       const base = path.basename(v, ext);
       
+      let title = base;
+      let durationStr = null;
+      let customThumb = null;
+
+      // Try to read metadata from info.json
+      const jsonPath = path.join(folderPath, `${base}.info.json`);
+      if (fs.existsSync(jsonPath)) {
+        try {
+          const info = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+          if (info.title) title = info.title;
+          if (info.duration) durationStr = formatDuration(info.duration);
+          
+          // Optionally extract a reliable thumbnail from json if local image is missing
+          // But local image check comes next anyway.
+        } catch (e) {
+          console.error(`[Scanner] Error reading JSON for ${v}:`, e.message);
+        }
+      }
+      
       // Find thumbnail: flexible matching
       let thumb = null;
       const baseNoExt = v.slice(0, v.lastIndexOf('.'));
@@ -82,13 +101,13 @@ async function scanFolder(mediaPath, folderName) {
       }
 
       const hash = hashVideoPath(vPath);
-      const duration = getDuration(vPath);
+      const duration = durationStr || getDuration(vPath);
       
       await db.updateMediaCache(
         vPath,
         folderName,
         v,
-        base,
+        title, // Use title extracted from JSON (or base fallback)
         thumb,
         duration,
         sizeMb,

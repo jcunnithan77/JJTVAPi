@@ -12,7 +12,7 @@ services:
     volumes:
       # Map your Ubuntu video directory here. 
       # IMPORTANT: Verify this path exists on Ubuntu with 'ls -R /media/usb/Blippi/downloads'
-      - /media/usb/Blippi/downloads:/app/videos
+      - /media/usb/videos:/app/videos
 
       # Persistence for the database and caches
       - ./backend/jjtv_config.db:/app/jjtv_config.db
