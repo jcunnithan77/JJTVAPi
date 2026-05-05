@@ -38,6 +38,16 @@ async function scanAll(mediaPath) {
     for (const folder of folders) {
       await scanFolder(mediaPath, folder);
     }
+
+    // Clean up DB: remove any playlists that no longer exist on disk
+    const cachedPlaylists = await db.getCachedPlaylists();
+    for (const cached of cachedPlaylists) {
+      if (!folders.includes(cached.name)) {
+        console.log(`[Scanner] Removing deleted folder from DB: ${cached.name}`);
+        await db.clearOldCache(cached.name);
+      }
+    }
+
     console.log('[Scanner] Full scan complete.');
   } catch (e) {
     console.error('[Scanner] Scan error:', e.message);
