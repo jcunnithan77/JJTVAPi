@@ -133,9 +133,18 @@ router.get('/admin-api/logs/stream', (req, res) => {
 
   logger.onLog(logHandler);
 
-  req.on('close', () => {
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     logger.offLog(logHandler);
-  });
+  };
+
+  req.on('close', cleanup);
+  req.on('end', cleanup);
+  res.on('close', cleanup);
+  res.on('finish', cleanup);
+  res.on('error', cleanup);
 });
 
 router.get('/admin-api/youtube/search', async (req, res) => {
