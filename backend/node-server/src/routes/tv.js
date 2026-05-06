@@ -45,6 +45,20 @@ function getThumbnail(dir, videoFile = null) {
   return null;
 }
 
+router.get('/api/status', async (req, res) => {
+  try {
+    const isAsleep = await db.isSystemAsleep();
+    const settings = await db.getSettings();
+    res.json({
+      locked: isAsleep,
+      message: settings.sleep_message || 'Time for bed!',
+      audio: settings.sleep_audio || ''
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/api/playlists', async (req, res) => {
   console.log(`[TV-API] GET /api/playlists from ${req.ip}`);
   if (await db.isSystemAsleep()) return res.json([]);
@@ -55,17 +69,29 @@ router.get('/api/playlists', async (req, res) => {
     const result = [];
     
     for (const p of cached) {
-      if (await db.isPlaylistAllowed(p.name)) {
-        // Find folder thumbnail for the list view
-        const itemPath = path.join(MEDIA_PATH, p.name);
-        const thumb = getThumbnail(itemPath);
-        result.push({
-          id: p.name,
-          name: p.name,
-          count: p.count,
-          thumbnail: thumb ? `/images/${encodeURIComponent(p.name)}/${encodeURIComponent(thumb)}` : null,
-        });
+      const isAllowed = await db.isPlaylistAllowed(p.name);
+      let lockMessage = '';
+      let lockAudio = '';
+      
+      if (!isAllowed) {
+        const schedule = await db.getSchedule(p.name);
+        if (schedule) {
+          lockMessage = schedule.lock_message || 'This playlist is currently locked.';
+          lockAudio = schedule.lock_audio || '';
+        }
       }
+
+      const itemPath = path.join(MEDIA_PATH, p.name);
+      const thumb = getThumbnail(itemPath);
+      result.push({
+        id: p.name,
+        name: p.name,
+        count: p.count,
+        thumbnail: thumb ? `/images/${encodeURIComponent(p.name)}/${encodeURIComponent(thumb)}` : null,
+        locked: !isAllowed,
+        lock_message: lockMessage,
+        lock_audio: lockAudio
+      });
     }
     res.json(result);
   } catch (e) {

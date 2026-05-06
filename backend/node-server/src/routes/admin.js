@@ -43,12 +43,17 @@ router.get('/admin-api/schedules', async (req, res) => {
   const scheduleMap = {};
   const schedules = await db.getSchedules();
   for (const row of schedules) {
-    scheduleMap[row.playlist] = { start_time: row.start_time, end_time: row.end_time };
+    scheduleMap[row.playlist] = { 
+      start_time: row.start_time, 
+      end_time: row.end_time,
+      lock_message: row.lock_message || '',
+      lock_audio: row.lock_audio || ''
+    };
   }
   try {
     for (const item of fs.readdirSync(MEDIA_PATH)) {
       if (fs.statSync(path.join(MEDIA_PATH, item)).isDirectory() && !scheduleMap[item]) {
-        scheduleMap[item] = { start_time: '', end_time: '' };
+        scheduleMap[item] = { start_time: '', end_time: '', lock_message: '', lock_audio: '' };
       }
     }
   } catch { /* ignore */ }
@@ -56,8 +61,8 @@ router.get('/admin-api/schedules', async (req, res) => {
 });
 
 router.post('/admin-api/schedules', async (req, res) => {
-  const { playlist, start_time, end_time } = req.body || {};
-  await db.upsertSchedule(playlist, start_time || '', end_time || '');
+  const { playlist, start_time, end_time, lock_message, lock_audio } = req.body || {};
+  await db.upsertSchedule(playlist, start_time || '', end_time || '', lock_message || '', lock_audio || '');
   res.json({ success: true });
 });
 
@@ -387,6 +392,53 @@ router.post('/admin-api/media/repair-audio/stop', (req, res) => {
   repairProcess.kill();
   repairProcess = null;
   res.json({ success: true });
+});
+
+router.post('/admin-api/media/move', async (req, res) => {
+  const { playlist, filename, newPlaylist } = req.body || {};
+  if (!playlist || !filename || !newPlaylist) {
+    return res.status(400).json({ error: 'Missing parameters' });
+  }
+
+  const oldDir = path.join(MEDIA_PATH, playlist);
+  const newDir = path.join(MEDIA_PATH, newPlaylist);
+  const oldVideoPath = path.join(oldDir, filename);
+  const newVideoPath = path.join(newDir, filename);
+
+  if (!fs.existsSync(oldVideoPath)) {
+    return res.status(404).json({ error: 'Source file not found' });
+  }
+
+  try {
+    if (!fs.existsSync(newDir)) {
+      fs.mkdirSync(newDir, { recursive: true });
+    }
+
+    fs.renameSync(oldVideoPath, newVideoPath);
+
+    const oldBase = oldVideoPath.replace(/\.[^.]+$/, '');
+    const newBase = newVideoPath.replace(/\.[^.]+$/, '');
+    for (const ext of IMAGE_EXTENSIONS) {
+      const oldThumb = oldBase + ext;
+      const newThumb = newBase + ext;
+      if (fs.existsSync(oldThumb)) {
+        fs.renameSync(oldThumb, newThumb);
+        break;
+      }
+    }
+
+    const dbInst = await db.getDb();
+    const newVpath = path.relative(MEDIA_PATH, newVideoPath).replace(/\\/g, '/');
+    await dbInst.run(`
+      UPDATE media_cache 
+      SET playlist = ?, vpath = ?
+      WHERE playlist = ? AND filename = ?
+    `, [newPlaylist, newVpath, playlist, filename]);
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = { router, setMediaPath };

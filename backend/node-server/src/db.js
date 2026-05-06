@@ -43,10 +43,15 @@ async function initDb() {
     );
   `);
 
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN lock_message TEXT`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN lock_audio TEXT`); } catch(e) {}
+
   // Default settings
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_start', '22:00')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_end', '06:00')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_sleep', 'false')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_message', 'Time for bed! See you tomorrow.')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_audio', '')");
 
   // Overlay defaults
   await db.run("INSERT OR IGNORE INTO overlay_config (key, value) VALUES ('enabled', 'false')");
@@ -86,9 +91,15 @@ async function getSchedules() {
   return await db.all(`SELECT * FROM schedules`);
 }
 
-async function upsertSchedule(playlist, startTime, endTime) {
+async function getSchedule(playlist) {
   const db = await getDb();
-  await db.run(`INSERT OR REPLACE INTO schedules (playlist, start_time, end_time) VALUES (?, ?, ?)`, [playlist, startTime, endTime]);
+  return await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [playlist]);
+}
+
+async function upsertSchedule(playlist, startTime, endTime, lockMessage = '', lockAudio = '') {
+  const db = await getDb();
+  await db.run(`INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio) VALUES (?, ?, ?, ?, ?)`, 
+    [playlist, startTime, endTime, lockMessage, lockAudio]);
 }
 
 async function deleteSchedule(playlist) {
@@ -187,7 +198,7 @@ async function getVideoPathByHash(hash) {
 
 module.exports = {
   initDb, getSettings, setSetting, getOverlay, setOverlay,
-  getSchedules, upsertSchedule, deleteSchedule,
+  getSchedules, getSchedule, upsertSchedule, deleteSchedule,
   getScheduledDownloads, createScheduledDownload, updateScheduledDownloadStatus, cancelScheduledDownload,
   updateMediaCache, getCachedPlaylists, getCachedVideos, clearOldCache,
   getVideoPathByHash,

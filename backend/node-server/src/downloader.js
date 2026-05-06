@@ -52,8 +52,8 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
 
   const ytdlpArgs = [
     '-f', 'bv*+ba/b',
-    '-S', 'ext:mp4:m4a',
-    '--merge-output-format', 'mp4',
+    '-S', 'res,ext:mp4:m4a',
+    '--merge-output-format', 'mkv',
     '--no-check-certificate',
     '-o', path.join(targetDir, '%(uploader|Unknown)s', '%(playlist_title|Misc)s', '%(id)s.%(ext)s'),
     '--write-thumbnail',
