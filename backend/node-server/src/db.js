@@ -52,6 +52,7 @@ async function initDb() {
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_sleep', 'false')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_message', 'Time for bed! See you tomorrow.')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_audio', '')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_image', '')");
 
   // Overlay defaults
   await db.run("INSERT OR IGNORE INTO overlay_config (key, value) VALUES ('enabled', 'false')");
@@ -173,9 +174,10 @@ async function isSystemAsleep() {
   const s = await getSettings();
   const defaultMsg = s.sleep_message || 'Time for bed!';
   const defaultAudio = s.sleep_audio || '';
+  const defaultImage = s.sleep_image || '';
 
   if (s.force_sleep === 'true') {
-    return { locked: true, message: defaultMsg, audio: defaultAudio };
+    return { locked: true, message: defaultMsg, audio: defaultAudio, image: defaultImage };
   }
 
   const now = new Date();
@@ -194,7 +196,8 @@ async function isSystemAsleep() {
             return {
               locked: true,
               message: slot.message || defaultMsg,
-              audio: slot.audio || defaultAudio
+              audio: slot.audio || defaultAudio,
+              image: slot.image || defaultImage
             };
           }
         }
@@ -209,7 +212,7 @@ async function isSystemAsleep() {
   const endM = _parseMins(s.sleep_end || '06:00');
   const isLegacyActive = startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
   if (isLegacyActive) {
-    return { locked: true, message: defaultMsg, audio: defaultAudio };
+    return { locked: true, message: defaultMsg, audio: defaultAudio, image: defaultImage };
   }
   return false;
 }

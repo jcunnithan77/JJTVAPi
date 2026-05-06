@@ -52,13 +52,15 @@ router.get('/api/status', async (req, res) => {
       res.json({
         locked: true,
         message: sleepStatus.message || 'Time for bed!',
-        audio: sleepStatus.audio || ''
+        audio: sleepStatus.audio || '',
+        image: sleepStatus.image || ''
       });
     } else {
       res.json({
         locked: false,
         message: '',
-        audio: ''
+        audio: '',
+        image: ''
       });
     }
   } catch (e) {
