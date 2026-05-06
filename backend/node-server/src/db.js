@@ -171,7 +171,13 @@ function _parseMins(str) {
 
 async function isSystemAsleep() {
   const s = await getSettings();
-  if (s.force_sleep === 'true') return true;
+  const defaultMsg = s.sleep_message || 'Time for bed!';
+  const defaultAudio = s.sleep_audio || '';
+
+  if (s.force_sleep === 'true') {
+    return { locked: true, message: defaultMsg, audio: defaultAudio };
+  }
+
   const now = new Date();
   const nowM = now.getHours() * 60 + now.getMinutes();
 
@@ -184,7 +190,13 @@ async function isSystemAsleep() {
           const startM = _parseMins(slot.start);
           const endM = _parseMins(slot.end);
           const isSlotActive = startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
-          if (isSlotActive) return true;
+          if (isSlotActive) {
+            return {
+              locked: true,
+              message: slot.message || defaultMsg,
+              audio: slot.audio || defaultAudio
+            };
+          }
         }
         return false;
       }
@@ -195,7 +207,11 @@ async function isSystemAsleep() {
 
   const startM = _parseMins(s.sleep_start || '22:00');
   const endM = _parseMins(s.sleep_end || '06:00');
-  return startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
+  const isLegacyActive = startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
+  if (isLegacyActive) {
+    return { locked: true, message: defaultMsg, audio: defaultAudio };
+  }
+  return false;
 }
 
 async function isPlaylistAllowed(name) {

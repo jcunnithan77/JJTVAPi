@@ -47,13 +47,20 @@ function getThumbnail(dir, videoFile = null) {
 
 router.get('/api/status', async (req, res) => {
   try {
-    const isAsleep = await db.isSystemAsleep();
-    const settings = await db.getSettings();
-    res.json({
-      locked: isAsleep,
-      message: settings.sleep_message || 'Time for bed!',
-      audio: settings.sleep_audio || ''
-    });
+    const sleepStatus = await db.isSystemAsleep();
+    if (sleepStatus) {
+      res.json({
+        locked: true,
+        message: sleepStatus.message || 'Time for bed!',
+        audio: sleepStatus.audio || ''
+      });
+    } else {
+      res.json({
+        locked: false,
+        message: '',
+        audio: ''
+      });
+    }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

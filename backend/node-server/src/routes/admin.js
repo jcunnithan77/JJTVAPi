@@ -81,9 +81,36 @@ router.post('/admin-api/overlay', async (req, res) => {
   res.json({ success: true });
 });
 
+function extractVideoId(url) {
+  if (!url) return null;
+  const match = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
+  return match ? match[1] : null;
+}
+
 router.post('/admin-api/download', async (req, res) => {
-  const { url, playlist = 'Downloads' } = req.body || {};
+  const { url, playlist = 'Downloads', force = false } = req.body || {};
   if (!url) return res.status(400).json({ error: 'URL required' });
+
+  if (force !== true && force !== 'true') {
+    const videoId = extractVideoId(url);
+    if (videoId) {
+      try {
+        const sdb = await db.getDb();
+        const cachedVideo = await sdb.get("SELECT * FROM media_cache WHERE filename LIKE ?", [`%${videoId}%`]);
+        if (cachedVideo) {
+          return res.json({
+            success: false,
+            alreadyDownloaded: true,
+            filename: cachedVideo.filename,
+            job_id: ''
+          });
+        }
+      } catch (e) {
+        console.error('[Admin API] Duplicate check failed', e);
+      }
+    }
+  }
+
   const jobId = String(Date.now());
   queueDownload(jobId, url, playlist, MEDIA_PATH);
   res.json({ success: true, job_id: jobId });
