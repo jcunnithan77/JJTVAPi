@@ -84,6 +84,10 @@ router.get('/api/playlists', async (req, res) => {
       
       if (!isAllowed) {
         const schedule = await db.getSchedule(p.name);
+        if (schedule && schedule.start_time && schedule.end_time) {
+          // If a schedule is set and we are outside the allowed runtime, hide the playlist entirely!
+          continue;
+        }
         if (schedule) {
           lockMessage = schedule.lock_message || 'This playlist is currently locked.';
           lockAudio = schedule.lock_audio || '';
