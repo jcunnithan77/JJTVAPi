@@ -219,13 +219,31 @@ async function isSystemAsleep() {
 
 async function isPlaylistAllowed(name) {
   const db = await getDb();
-  const row = await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [name]);
-  if (!row || !row.start_time || !row.end_time) return true;
+  const schedules = await db.all(`SELECT * FROM schedules WHERE start_time IS NOT NULL AND start_time != ''`);
+  
   const now = new Date();
   const nowM = now.getHours() * 60 + now.getMinutes();
-  const startM = _parseMins(row.start_time);
-  const endM = _parseMins(row.end_time);
-  return startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
+
+  const activeScheduledNames = [];
+  const scheduledNames = [];
+
+  for (const s of schedules) {
+    if (s.start_time && s.end_time) {
+      scheduledNames.push(s.playlist);
+      const startM = _parseMins(s.start_time);
+      const endM = _parseMins(s.end_time);
+      const isActive = startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
+      if (isActive) {
+        activeScheduledNames.push(s.playlist);
+      }
+    }
+  }
+
+  if (activeScheduledNames.length > 0) {
+    return activeScheduledNames.includes(name);
+  } else {
+    return !scheduledNames.includes(name);
+  }
 }
 
 async function getVideoPathByHash(hash) {
