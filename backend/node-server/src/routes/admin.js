@@ -468,4 +468,31 @@ router.post('/admin-api/media/move', async (req, res) => {
   }
 });
 
+const multer = require('multer');
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(MEDIA_PATH, 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, uniqueName);
+  }
+});
+
+const upload = multer({ storage });
+
+router.post('/admin-api/upload', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  const relativeUrl = `/uploads/${req.file.filename}`;
+  res.json({ success: true, url: relativeUrl });
+});
+
 module.exports = { router, setMediaPath };

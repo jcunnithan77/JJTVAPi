@@ -193,6 +193,18 @@ router.get('/images/*', (req, res) => {
   res.sendFile(imgPath);
 });
 
+router.get('/uploads/*', (req, res) => {
+  const filePath = req.params[0];
+  const decodedPath = decodeURIComponent(filePath);
+  const fullPath = path.join(MEDIA_PATH, 'uploads', decodedPath);
+
+  if (!fs.existsSync(fullPath)) return res.status(404).send('Not found');
+  const mimeType = mime.lookup(fullPath) || 'application/octet-stream';
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.sendFile(fullPath);
+});
+
 // Robust hash-based streaming (handles special characters like ?, #, etc)
 router.get('/stream/hash/:hash', async (req, res) => {
   const { hash } = req.params;
