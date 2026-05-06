@@ -1,0 +1,5 @@
+[9:23:01 PM] ERROR: [Config] Error loading config.json: Bad escaped character in JSON at position 24 (line 2 column 23)
+[9:23:01 PM] [Config] Media Path: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
+[9:23:01 PM] [DB] Initialized.
+[9:23:01 PM] [Scheduler] Started — checking every minute for scheduled downloads.
+[9:23:01 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos

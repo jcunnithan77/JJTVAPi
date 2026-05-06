@@ -575,6 +575,8 @@ router.post('/admin-api/upload-video', uploadVideo.single('file'), async (req, r
       }
     });
   }
+});
+
 router.post('/admin-api/create-playlist', uploadVideo.fields([
   { name: 'video', maxCount: 1 },
   { name: 'thumbnail', maxCount: 1 }
