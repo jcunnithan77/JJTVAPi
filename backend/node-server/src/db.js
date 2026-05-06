@@ -174,6 +174,25 @@ async function isSystemAsleep() {
   if (s.force_sleep === 'true') return true;
   const now = new Date();
   const nowM = now.getHours() * 60 + now.getMinutes();
+
+  if (s.sleep_slots) {
+    try {
+      const slots = JSON.parse(s.sleep_slots);
+      if (Array.isArray(slots) && slots.length > 0) {
+        for (const slot of slots) {
+          if (!slot.start || !slot.end) continue;
+          const startM = _parseMins(slot.start);
+          const endM = _parseMins(slot.end);
+          const isSlotActive = startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
+          if (isSlotActive) return true;
+        }
+        return false;
+      }
+    } catch (e) {
+      console.error('[DB] Failed to parse sleep_slots', e);
+    }
+  }
+
   const startM = _parseMins(s.sleep_start || '22:00');
   const endM = _parseMins(s.sleep_end || '06:00');
   return startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
