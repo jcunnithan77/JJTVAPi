@@ -575,6 +575,75 @@ router.post('/admin-api/upload-video', uploadVideo.single('file'), async (req, r
       }
     });
   }
+router.post('/admin-api/create-playlist', uploadVideo.fields([
+  { name: 'video', maxCount: 1 },
+  { name: 'thumbnail', maxCount: 1 }
+]), async (req, res) => {
+  const { name } = req.body || {};
+  if (!name) {
+    return res.status(400).json({ error: 'Playlist name is required' });
+  }
+
+  const videoFile = req.files && req.files.video ? req.files.video[0] : null;
+  const thumbnailFile = req.files && req.files.thumbnail ? req.files.thumbnail[0] : null;
+
+  if (!videoFile) {
+    return res.status(400).json({ error: 'Initial video file is required' });
+  }
+
+  const destDir = path.join(MEDIA_PATH, name);
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
+  }
+
+  if (thumbnailFile) {
+    const thumbExt = path.extname(thumbnailFile.originalname).toLowerCase();
+    const thumbDestPath = path.join(destDir, `thumbnail${thumbExt}`);
+    try {
+      fs.renameSync(thumbnailFile.path, thumbDestPath);
+    } catch (e) {
+      console.error('[PlaylistCreator] Error saving thumbnail:', e.message);
+    }
+  }
+
+  const videoExt = path.extname(videoFile.originalname).toLowerCase();
+  const videoBase = path.basename(videoFile.originalname, videoExt);
+  const videoDestPath = path.join(destDir, `${videoBase}.mp4`);
+
+  if (videoExt === '.mp4') {
+    try {
+      fs.renameSync(videoFile.path, videoDestPath);
+      const scanner = require('../scanner');
+      await scanner.scanFolder(MEDIA_PATH, name);
+      res.json({ success: true, message: `✓ Playlist "${name}" created and video uploaded successfully!` });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  } else {
+    const { exec } = require('child_process');
+    const os = require('os');
+    const FFMPEG_PATH = process.env.FFMPEG_BIN || (os.platform() === 'win32' ? path.join(__dirname, '..', '..', 'ffmpeg.exe') : 'ffmpeg');
+
+    const cmd = `"${FFMPEG_PATH}" -y -i "${videoFile.path}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${videoDestPath}"`;
+
+    console.log(`[PlaylistCreator] Starting background transcode for playlist "${name}": ${videoFile.originalname}`);
+
+    res.json({
+      success: true,
+      message: `✓ Playlist "${name}" created! Video is converting to MP4 format in background...`
+    });
+
+    exec(cmd, async (err) => {
+      try { fs.unlinkSync(videoFile.path); } catch {}
+      if (err) {
+        console.error('[PlaylistCreator] FFmpeg transcoding failed:', err.message);
+      } else {
+        console.log('[PlaylistCreator] Background transcode complete:', videoDestPath);
+        const scanner = require('../scanner');
+        await scanner.scanFolder(MEDIA_PATH, name);
+      }
+    });
+  }
 });
 
 module.exports = { router, setMediaPath };
