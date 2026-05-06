@@ -495,6 +495,27 @@ router.post('/admin-api/upload', upload.single('file'), (req, res) => {
   res.json({ success: true, url: relativeUrl });
 });
 
+function generateVideoThumbnail(videoPath) {
+  const ext = path.extname(videoPath);
+  const base = path.basename(videoPath, ext);
+  const dir = path.dirname(videoPath);
+  const thumbPath = path.join(dir, `${base}.jpg`);
+
+  const { exec } = require('child_process');
+  const os = require('os');
+  const FFMPEG_PATH = process.env.FFMPEG_BIN || (os.platform() === 'win32' ? path.join(__dirname, '..', '..', 'ffmpeg.exe') : 'ffmpeg');
+
+  const cmd = `"${FFMPEG_PATH}" -y -ss 00:00:01 -i "${videoPath}" -vframes 1 -q:v 2 "${thumbPath}"`;
+  console.log(`[AutoThumbnail] Generating thumbnail: ${thumbPath}`);
+  exec(cmd, (err) => {
+    if (err) {
+      console.error(`[AutoThumbnail] Failed to generate thumbnail for ${videoPath}:`, err.message);
+    } else {
+      console.log(`[AutoThumbnail] Thumbnail generated successfully: ${thumbPath}`);
+    }
+  });
+}
+
 const videoStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const tempDir = path.join(MEDIA_PATH, 'uploads', 'temp');
@@ -538,6 +559,7 @@ router.post('/admin-api/upload-video', uploadVideo.single('file'), async (req, r
         finalDestPath = path.join(destDir, `${baseName}-${Date.now()}.mp4`);
       }
       fs.renameSync(req.file.path, finalDestPath);
+      generateVideoThumbnail(finalDestPath);
       const scanner = require('../scanner');
       await scanner.scanFolder(MEDIA_PATH, playlist);
       res.json({ success: true, message: '✓ Video uploaded successfully!' });
@@ -570,6 +592,7 @@ router.post('/admin-api/upload-video', uploadVideo.single('file'), async (req, r
         console.error('[Transcoder] FFmpeg transcode failed:', err.message);
       } else {
         console.log('[Transcoder] Transcode successful:', finalDestPath);
+        generateVideoThumbnail(finalDestPath);
         const scanner = require('../scanner');
         await scanner.scanFolder(MEDIA_PATH, playlist);
       }
@@ -615,6 +638,9 @@ router.post('/admin-api/create-playlist', uploadVideo.fields([
   if (videoExt === '.mp4') {
     try {
       fs.renameSync(videoFile.path, videoDestPath);
+      if (!thumbnailFile) {
+        generateVideoThumbnail(videoDestPath);
+      }
       const scanner = require('../scanner');
       await scanner.scanFolder(MEDIA_PATH, name);
       res.json({ success: true, message: `✓ Playlist "${name}" created and video uploaded successfully!` });
@@ -641,6 +667,9 @@ router.post('/admin-api/create-playlist', uploadVideo.fields([
         console.error('[PlaylistCreator] FFmpeg transcoding failed:', err.message);
       } else {
         console.log('[PlaylistCreator] Background transcode complete:', videoDestPath);
+        if (!thumbnailFile) {
+          generateVideoThumbnail(videoDestPath);
+        }
         const scanner = require('../scanner');
         await scanner.scanFolder(MEDIA_PATH, name);
       }
