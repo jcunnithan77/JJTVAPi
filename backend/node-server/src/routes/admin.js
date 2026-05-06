@@ -495,4 +495,86 @@ router.post('/admin-api/upload', upload.single('file'), (req, res) => {
   res.json({ success: true, url: relativeUrl });
 });
 
+const videoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const tempDir = path.join(MEDIA_PATH, 'uploads', 'temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    cb(null, tempDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const uniqueName = `video-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, uniqueName);
+  }
+});
+
+const uploadVideo = multer({ storage: videoStorage });
+
+router.post('/admin-api/upload-video', uploadVideo.single('file'), async (req, res) => {
+  const { playlist } = req.body || {};
+  if (!playlist) {
+    return res.status(400).json({ error: 'Missing playlist parameter' });
+  }
+  if (!req.file) {
+    return res.status(400).json({ error: 'No video file uploaded' });
+  }
+
+  const ext = path.extname(req.file.originalname).toLowerCase();
+  const baseName = path.basename(req.file.originalname, ext);
+  const destDir = path.join(MEDIA_PATH, playlist);
+
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
+  }
+
+  const destPath = path.join(destDir, `${baseName}.mp4`);
+
+  if (ext === '.mp4') {
+    try {
+      let finalDestPath = destPath;
+      if (fs.existsSync(destPath)) {
+        finalDestPath = path.join(destDir, `${baseName}-${Date.now()}.mp4`);
+      }
+      fs.renameSync(req.file.path, finalDestPath);
+      const scanner = require('../scanner');
+      await scanner.scanFolder(MEDIA_PATH, playlist);
+      res.json({ success: true, message: '✓ Video uploaded successfully!' });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  } else {
+    const { exec } = require('child_process');
+    const os = require('os');
+    const FFMPEG_PATH = process.env.FFMPEG_BIN || (os.platform() === 'win32' ? path.join(__dirname, '..', '..', 'ffmpeg.exe') : 'ffmpeg');
+    
+    let finalDestPath = destPath;
+    if (fs.existsSync(destPath)) {
+      finalDestPath = path.join(destDir, `${baseName}-${Date.now()}.mp4`);
+    }
+
+    const cmd = `"${FFMPEG_PATH}" -y -i "${req.file.path}" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k "${finalDestPath}"`;
+    
+    console.log(`[Transcoder] Starting transcode: ${req.file.originalname} -> ${finalDestPath}`);
+    
+    res.json({ 
+      success: true, 
+      message: '✓ Upload received! Converting video to MP4 format in background...' 
+    });
+
+    exec(cmd, async (err) => {
+      try { fs.unlinkSync(req.file.path); } catch {}
+      
+      if (err) {
+        console.error('[Transcoder] FFmpeg transcode failed:', err.message);
+      } else {
+        console.log('[Transcoder] Transcode successful:', finalDestPath);
+        const scanner = require('../scanner');
+        await scanner.scanFolder(MEDIA_PATH, playlist);
+      }
+    });
+  }
+});
+
 module.exports = { router, setMediaPath };

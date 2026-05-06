@@ -222,6 +222,10 @@ router.get('/stream/hash/:hash', async (req, res) => {
   res.setHeader('Content-Type', mimeType);
   res.setHeader('Accept-Ranges', 'bytes');
 
+  if (req.query.download === '1') {
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(path.basename(videoPath))}"`);
+  }
+
   res.sendFile(videoPath, err => {
     if (err && !res.headersSent) res.status(500).send('Stream error');
   });
@@ -249,6 +253,10 @@ router.get('/stream/*', async (req, res) => {
   const mimeType = mime.lookup(videoPath) || 'video/mp4';
   res.setHeader('Content-Type', mimeType);
   res.setHeader('Accept-Ranges', 'bytes');
+
+  if (req.query.download === '1') {
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(path.basename(videoPath))}"`);
+  }
 
   res.sendFile(videoPath, err => {
     if (err && !res.headersSent) res.status(500).send('Stream error');
