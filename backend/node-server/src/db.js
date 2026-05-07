@@ -53,6 +53,7 @@ async function initDb() {
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_message', 'Time for bed! See you tomorrow.')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_audio', '')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_image', '')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('timezone', 'local')");
 
   // Overlay defaults
   await db.run("INSERT OR IGNORE INTO overlay_config (key, value) VALUES ('enabled', 'false')");
@@ -73,7 +74,8 @@ async function getSettings() {
 
 async function setSetting(key, value) {
   const db = await getDb();
-  await db.run(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, [key, String(value).toLowerCase()]);
+  const storedValue = key === 'timezone' ? String(value) : String(value).toLowerCase();
+  await db.run(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, [key, storedValue]);
 }
 
 async function getOverlay() {
@@ -170,6 +172,46 @@ function _parseMins(str) {
   return h * 60 + m;
 }
 
+async function getNowInConfiguredTimezone() {
+  const now = new Date();
+  const db = await getDb();
+  const row = await db.get(`SELECT value FROM settings WHERE key = 'timezone'`);
+  const timezone = row ? row.value : null;
+
+  if (!timezone || timezone === 'local') return now;
+
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hour12: false
+    });
+
+    const parts = formatter.formatToParts(now);
+    const dateParts = {};
+    for (const part of parts) {
+      dateParts[part.type] = part.value;
+    }
+
+    return new Date(
+      parseInt(dateParts.year),
+      parseInt(dateParts.month) - 1,
+      parseInt(dateParts.day),
+      parseInt(dateParts.hour),
+      parseInt(dateParts.minute),
+      parseInt(dateParts.second)
+    );
+  } catch (e) {
+    console.error(`[DB] Error parsing configured timezone "${timezone}":`, e);
+    return now;
+  }
+}
+
 async function isSystemAsleep() {
   const s = await getSettings();
   const defaultMsg = s.sleep_message || 'Time for bed!';
@@ -180,7 +222,7 @@ async function isSystemAsleep() {
     return { locked: true, message: defaultMsg, audio: defaultAudio, image: defaultImage };
   }
 
-  const now = new Date();
+  const now = await getNowInConfiguredTimezone();
   const nowM = now.getHours() * 60 + now.getMinutes();
 
   if (s.sleep_slots) {
@@ -221,7 +263,7 @@ async function isPlaylistAllowed(name) {
   const db = await getDb();
   const schedules = await db.all(`SELECT * FROM schedules WHERE start_time IS NOT NULL AND start_time != ''`);
   
-  const now = new Date();
+  const now = await getNowInConfiguredTimezone();
   const nowM = now.getHours() * 60 + now.getMinutes();
 
   const activeScheduledNames = [];
