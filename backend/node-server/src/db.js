@@ -54,6 +54,9 @@ async function initDb() {
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_audio', '')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_image', '')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('timezone', 'local')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_message', '')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_audio', '')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_image', '')");
 
   // Overlay defaults
   await db.run("INSERT OR IGNORE INTO overlay_config (key, value) VALUES ('enabled', 'false')");
@@ -219,7 +222,12 @@ async function isSystemAsleep() {
   const defaultImage = s.sleep_image || '';
 
   if (s.force_sleep === 'true') {
-    return { locked: true, message: defaultMsg, audio: defaultAudio, image: defaultImage };
+    return {
+      locked: true,
+      message: s.force_lock_message || defaultMsg,
+      audio: s.force_lock_audio || defaultAudio,
+      image: s.force_lock_image || defaultImage
+    };
   }
 
   const now = await getNowInConfiguredTimezone();
