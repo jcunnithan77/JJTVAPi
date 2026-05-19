@@ -61,13 +61,48 @@ router.get('/admin-api/schedules', async (req, res) => {
 });
 
 router.post('/admin-api/schedules', async (req, res) => {
-  const { playlist, start_time, end_time, lock_message, lock_audio } = req.body || {};
-  await db.upsertSchedule(playlist, start_time || '', end_time || '', lock_message || '', lock_audio || '');
+  const { playlist, start_time, end_time, lock_message, lock_audio, priority } = req.body || {};
+  await db.upsertSchedule(playlist, start_time || '', end_time || '', lock_message || '', lock_audio || '', parseInt(priority || 0));
   res.json({ success: true });
 });
 
 router.delete('/admin-api/schedules/:playlist(*)', async (req, res) => {
   await db.deleteSchedule(req.params.playlist);
+  res.json({ success: true });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Force Lock Profiles
+// ─────────────────────────────────────────────────────────────
+
+router.get('/admin-api/force-lock-profiles', async (req, res) => {
+  res.json(await db.getLockProfiles());
+});
+
+router.post('/admin-api/force-lock-profiles', async (req, res) => {
+  const { id, name, icon_url, audio_url, message } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  const newId = await db.upsertLockProfile(id || null, name, icon_url || '', audio_url || '', message || '');
+  res.json({ success: true, id: newId });
+});
+
+router.delete('/admin-api/force-lock-profiles/:id', async (req, res) => {
+  await db.deleteLockProfile(parseInt(req.params.id));
+  res.json({ success: true });
+});
+
+router.post('/admin-api/force-lock-profiles/:id/activate', async (req, res) => {
+  const id = parseInt(req.params.id);
+  const profile = await db.getLockProfile(id);
+  if (!profile) return res.status(404).json({ error: 'Profile not found' });
+  await db.setSetting('force_lock_profile_id', String(id));
+  await db.setSetting('force_sleep', 'true');
+  res.json({ success: true });
+});
+
+router.post('/admin-api/force-lock-profiles/deactivate', async (req, res) => {
+  await db.setSetting('force_sleep', 'false');
+  await db.setSetting('force_lock_profile_id', '');
   res.json({ success: true });
 });
 

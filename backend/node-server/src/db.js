@@ -45,6 +45,33 @@ async function initDb() {
 
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN lock_message TEXT`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN lock_audio TEXT`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN priority INTEGER DEFAULT 0`); } catch(e) {}
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS force_lock_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      icon_url TEXT DEFAULT '',
+      audio_url TEXT DEFAULT '',
+      message TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS daily_playlist_progress (
+      playlist TEXT NOT NULL, 
+      date TEXT NOT NULL, 
+      completed INTEGER DEFAULT 0,
+      PRIMARY KEY (playlist, date)
+    );
+    CREATE TABLE IF NOT EXISTS video_watch_log (
+      vhash TEXT NOT NULL, 
+      playlist TEXT NOT NULL, 
+      watch_count INTEGER DEFAULT 0,
+      demoted INTEGER DEFAULT 0, 
+      last_watched TEXT, 
+      PRIMARY KEY (vhash, playlist)
+    );
+  `);
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_profile_id', '')");
 
   // Default settings
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_start', '22:00')");
@@ -102,10 +129,10 @@ async function getSchedule(playlist) {
   return await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
-async function upsertSchedule(playlist, startTime, endTime, lockMessage = '', lockAudio = '') {
+async function upsertSchedule(playlist, startTime, endTime, lockMessage = '', lockAudio = '', priority = 0) {
   const db = await getDb();
-  await db.run(`INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio) VALUES (?, ?, ?, ?, ?)`, 
-    [playlist, startTime, endTime, lockMessage, lockAudio]);
+  await db.run(`INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority) VALUES (?, ?, ?, ?, ?, ?)`, 
+    [playlist, startTime, endTime, lockMessage, lockAudio, priority]);
 }
 
 async function deleteSchedule(playlist) {
@@ -222,11 +249,24 @@ async function isSystemAsleep() {
   const defaultImage = s.sleep_image || '';
 
   if (s.force_sleep === 'true') {
+    const profileId = s.force_lock_profile_id;
+    let profileData = {};
+    if (profileId) {
+      const profile = await getLockProfile(parseInt(profileId));
+      if (profile) {
+        profileData = {
+          message: profile.message || s.force_lock_message || defaultMsg,
+          audio:   profile.audio_url || s.force_lock_audio || defaultAudio,
+          image:   profile.icon_url  || s.force_lock_image || defaultImage,
+        };
+      }
+    }
     return {
       locked: true,
-      message: s.force_lock_message || defaultMsg,
-      audio: s.force_lock_audio || defaultAudio,
-      image: s.force_lock_image || defaultImage
+      message: profileData.message || s.force_lock_message || defaultMsg,
+      audio:   profileData.audio   || s.force_lock_audio   || defaultAudio,
+      image:   profileData.image   || s.force_lock_image   || defaultImage,
+      profile_id: profileId || null,
     };
   }
 
@@ -267,33 +307,131 @@ async function isSystemAsleep() {
   return false;
 }
 
-async function isPlaylistAllowed(name) {
+async function getPlaylistsForDisplay() {
   const db = await getDb();
-  const schedules = await db.all(`SELECT * FROM schedules WHERE start_time IS NOT NULL AND start_time != ''`);
-  
   const now = await getNowInConfiguredTimezone();
+  const today = now.toISOString().slice(0, 10);
   const nowM = now.getHours() * 60 + now.getMinutes();
 
-  const activeScheduledNames = [];
-  const scheduledNames = [];
+  const schedules = await db.all(
+    `SELECT * FROM schedules WHERE start_time IS NOT NULL AND start_time != '' ORDER BY priority DESC`
+  );
+
+  const activePriority = [];
+  const scheduledNames = new Set();
 
   for (const s of schedules) {
-    if (s.start_time && s.end_time) {
-      scheduledNames.push(s.playlist);
-      const startM = _parseMins(s.start_time);
-      const endM = _parseMins(s.end_time);
-      const isActive = startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
-      if (isActive) {
-        activeScheduledNames.push(s.playlist);
-      }
-    }
+    scheduledNames.add(s.playlist);
+    const startM = _parseMins(s.start_time);
+    const endM   = _parseMins(s.end_time);
+    const inWindow = startM < endM
+      ? (nowM >= startM && nowM <= endM)
+      : (nowM >= startM || nowM <= endM);
+    if (inWindow) activePriority.push(s.playlist);
   }
 
-  if (activeScheduledNames.length > 0) {
-    return activeScheduledNames.includes(name);
-  } else {
-    return !scheduledNames.includes(name);
+  if (activePriority.length === 0) {
+    return { mode: 'all', playlists: null };
   }
+
+  const placeholders = activePriority.map(() => '?').join(',');
+  const completionRows = await db.all(
+    `SELECT playlist, completed FROM daily_playlist_progress WHERE date = ? AND playlist IN (${placeholders})`,
+    [today, ...activePriority]
+  );
+  
+  const completedSet = new Set(completionRows.filter(r => r.completed === 1).map(r => r.playlist));
+  const allDone = activePriority.every(p => completedSet.has(p));
+
+  if (allDone) {
+    return { mode: 'fallback', playlists: null, excludeScheduled: scheduledNames };
+  }
+
+  return { mode: 'priority', playlists: activePriority };
+}
+
+async function isPlaylistAllowed(name) {
+  const result = await getPlaylistsForDisplay();
+  if (result.mode === 'all') return true;
+  if (result.mode === 'priority') return result.playlists.includes(name);
+  if (result.mode === 'fallback') return !result.excludeScheduled.has(name);
+  return true;
+}
+
+// --- Force Lock Profiles ---
+async function getLockProfiles() {
+  const db = await getDb();
+  return await db.all(`SELECT * FROM force_lock_profiles ORDER BY id ASC`);
+}
+
+async function getLockProfile(id) {
+  const db = await getDb();
+  return await db.get(`SELECT * FROM force_lock_profiles WHERE id = ?`, [id]);
+}
+
+async function upsertLockProfile(id, name, iconUrl, audioUrl, message) {
+  const db = await getDb();
+  if (id) {
+    await db.run(
+      `UPDATE force_lock_profiles SET name=?, icon_url=?, audio_url=?, message=? WHERE id=?`,
+      [name, iconUrl, audioUrl, message, id]
+    );
+    return id;
+  } else {
+    const res = await db.run(
+      `INSERT INTO force_lock_profiles (name, icon_url, audio_url, message) VALUES (?, ?, ?, ?)`,
+      [name, iconUrl, audioUrl, message]
+    );
+    return res.lastID;
+  }
+}
+
+async function deleteLockProfile(id) {
+  const db = await getDb();
+  const active = await db.get(`SELECT value FROM settings WHERE key='force_lock_profile_id'`);
+  if (active && active.value === String(id)) {
+    await db.run(`UPDATE settings SET value='' WHERE key='force_lock_profile_id'`);
+    await db.run(`UPDATE settings SET value='false' WHERE key='force_sleep'`);
+  }
+  await db.run(`DELETE FROM force_lock_profiles WHERE id = ?`, [id]);
+}
+
+// --- Video Watch Progress ---
+async function recordVideoWatch(vhash, playlist) {
+  const db = await getDb();
+  await db.run(`
+    INSERT INTO video_watch_log (vhash, playlist, watch_count, demoted, last_watched)
+    VALUES (?, ?, 1, 0, CURRENT_TIMESTAMP)
+    ON CONFLICT(vhash, playlist) DO UPDATE SET
+      watch_count = watch_count + 1,
+      last_watched = CURRENT_TIMESTAMP
+  `, [vhash, playlist]);
+  const row = await db.get(`SELECT watch_count FROM video_watch_log WHERE vhash=? AND playlist=?`, [vhash, playlist]);
+  return row ? row.watch_count : 1;
+}
+
+async function demoteVideo(vhash, playlist) {
+  const db = await getDb();
+  await db.run(`UPDATE video_watch_log SET demoted=1 WHERE vhash=? AND playlist=?`, [vhash, playlist]);
+}
+
+async function getPlaylistWatchLog(playlist) {
+  const db = await getDb();
+  return await db.all(`SELECT * FROM video_watch_log WHERE playlist=?`, [playlist]);
+}
+
+async function resetPlaylistWatchLog(playlist) {
+  const db = await getDb();
+  await db.run(`DELETE FROM video_watch_log WHERE playlist=?`, [playlist]);
+}
+
+async function markPlaylistCompleted(playlist) {
+  const db = await getDb();
+  const today = new Date().toISOString().slice(0, 10);
+  await db.run(`
+    INSERT OR REPLACE INTO daily_playlist_progress (playlist, date, completed)
+    VALUES (?, ?, 1)
+  `, [playlist, today]);
 }
 
 async function getVideoPathByHash(hash) {
@@ -308,5 +446,7 @@ module.exports = {
   getScheduledDownloads, createScheduledDownload, updateScheduledDownloadStatus, cancelScheduledDownload,
   updateMediaCache, getCachedPlaylists, getCachedVideos, clearOldCache,
   getVideoPathByHash,
-  isSystemAsleep, isPlaylistAllowed,
+  isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay,
+  getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
+  recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted
 };

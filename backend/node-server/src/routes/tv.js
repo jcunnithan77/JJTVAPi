@@ -111,7 +111,15 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
   try {
     const videos = await db.getCachedVideos(playlistId);
     
-    const videoList = videos.map(v => {
+    const watchLog = await db.getPlaylistWatchLog(playlistId);
+    const demotedSet = new Set(watchLog.filter(r => r.demoted === 1).map(r => r.vhash));
+
+    const sorted = [
+      ...videos.filter(v => !demotedSet.has(v.vhash)),
+      ...videos.filter(v => demotedSet.has(v.vhash)),
+    ];
+
+    const videoList = sorted.map(v => {
       // Register in hash map for HLS
       registerVideo(v.vpath);
 
@@ -123,11 +131,49 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
         thumbnail: v.thumbnail,
         duration: v.duration,
         size_mb: v.size_mb,
+        vhash: v.vhash,
+        playlist: playlistId,
+        demoted: demotedSet.has(v.vhash),
+        watch_count: watchLog.find(l => l.vhash === v.vhash)?.watch_count || 0,
       };
     });
 
     res.json({ id: playlistId, name: playlistId, videos: videoList });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/api/video/watched', async (req, res) => {
+  const { vhash, playlist } = req.body || {};
+  if (!vhash || !playlist) return res.status(400).json({ error: 'Missing params' });
+
+  try {
+    const count = await db.recordVideoWatch(vhash, playlist);
+
+    if (count >= 3) {
+      await db.demoteVideo(vhash, playlist);
+    }
+
+    // Check if ALL non-demoted videos in the playlist have now been demoted
+    const log = await db.getPlaylistWatchLog(playlist);
+    const allVideos = await db.getCachedVideos(playlist);
+    const demotedHashes = new Set(log.filter(r => r.demoted === 1).map(r => r.vhash));
+    const allDemoted = allVideos.length > 0 && allVideos.every(v => demotedHashes.has(v.vhash));
+
+    if (allDemoted) {
+      // Full rotation complete → reset all locks
+      await db.resetPlaylistWatchLog(playlist);
+      // Also check if this is a priority playlist and mark as completed
+      const schedule = await db.getSchedule(playlist);
+      if (schedule && schedule.start_time) {
+        await db.markPlaylistCompleted(playlist);
+      }
+    }
+
+    res.json({ success: true, watch_count: count, rotation_reset: allDemoted });
+  } catch (e) {
+    console.error(`[TV-API] Error recording video watch: ${e.message}`);
     res.status(500).json({ error: e.message });
   }
 });
