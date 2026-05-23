@@ -440,7 +440,10 @@ def get_playlist(playlist_id):
             'url': f'/stream/{urllib.parse.quote(playlist_id)}/{urllib.parse.quote(v)}',
             'hls_url': f'/hls/stream/{video_hash}/index.m3u8',
             'thumbnail': f'/images/{urllib.parse.quote(playlist_id)}/{urllib.parse.quote(thumb)}' if thumb else None,
-            'duration': None # Durations are slow to calculate, skip for now
+            'duration': None, # Durations are slow to calculate, skip for now
+            'vhash': video_hash,
+            'playlist': playlist_id,
+            'demoted': False
         })
     return jsonify({'id': playlist_id, 'name': playlist_id, 'videos': video_list})
 
@@ -603,7 +606,8 @@ def local_search():
                             'duration': duration or "",
                             'thumbnail': f'/images/{urllib.parse.quote(playlist)}/{urllib.parse.quote(thumb)}' if thumb else "",
                             'url': f'/stream/{urllib.parse.quote(playlist)}/{urllib.parse.quote(v)}',
-                            'hls_url': f'/hls/stream/{video_hash}/index.m3u8'
+                            'hls_url': f'/hls/stream/{video_hash}/index.m3u8',
+                            'vhash': video_hash
                         })
     except Exception as e:
         print(f"Search Error: {e}")
@@ -619,6 +623,74 @@ def get_tv_overlay():
     cfg = {row['key']: row['value'] for row in conn.execute("SELECT * FROM overlay_config")}
     conn.close()
     return jsonify(cfg)
+
+
+@app.route('/api/video/watched', methods=['POST'])
+def record_video_watched():
+    """Called by the Android TV app when a video finishes playing."""
+    data = request.json or {}
+    vhash = data.get('vhash', '').strip()
+    playlist = data.get('playlist', '').strip()
+
+    if not vhash:
+        return jsonify({'success': False, 'error': 'vhash required'}), 400
+
+    conn = get_db_connection()
+    conn.execute('''CREATE TABLE IF NOT EXISTS watched_videos
+                    (vhash TEXT PRIMARY KEY, playlist TEXT, watch_count INTEGER DEFAULT 0,
+                     last_watched TEXT DEFAULT CURRENT_TIMESTAMP)''')
+    existing = conn.execute("SELECT watch_count FROM watched_videos WHERE vhash=?", (vhash,)).fetchone()
+    if existing:
+        new_count = existing['watch_count'] + 1
+        conn.execute("UPDATE watched_videos SET watch_count=?, last_watched=CURRENT_TIMESTAMP WHERE vhash=?",
+                     (new_count, vhash))
+    else:
+        new_count = 1
+        conn.execute("INSERT INTO watched_videos (vhash, playlist, watch_count) VALUES (?,?,1)",
+                     (vhash, playlist))
+    conn.commit()
+    conn.close()
+
+    return jsonify({'success': True, 'watch_count': new_count, 'rotation_reset': False})
+
+
+
+@app.route('/api/status', methods=['GET'])
+def get_system_status():
+    """Used by the Android TV app to check lock state and streaming config."""
+    locked = is_system_asleep()
+
+    # Read lock screen overlay settings
+    conn = get_db_connection()
+    settings = {row['key']: row['value'] for row in conn.execute("SELECT * FROM settings")}
+    conn.close()
+
+    lock_message = settings.get('lock_message', 'Time for bed!')
+    lock_audio = settings.get('lock_audio', '')
+    lock_image = settings.get('lock_image', '')
+
+    # Determine the LAN IP of this machine so the TV can stream via local network
+    lan_ip = ''
+    stream_through_lan = True  # Always prefer LAN for video streaming
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+        # Build full URL with port so the Android app can use it directly
+        lan_ip = f'http://{lan_ip}:5000'
+    except Exception:
+        stream_through_lan = False
+
+    return jsonify({
+        'locked': locked,
+        'message': lock_message if locked else '',
+        'audio': lock_audio if locked else '',
+        'image': lock_image if locked else '',
+        'stream_through_lan': stream_through_lan,
+        'lan_ip': lan_ip
+    })
 
 
 # --- ADMIN API Endpoints ---
