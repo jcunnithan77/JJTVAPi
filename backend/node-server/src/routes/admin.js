@@ -47,13 +47,16 @@ router.get('/admin-api/schedules', async (req, res) => {
       start_time: row.start_time, 
       end_time: row.end_time,
       lock_message: row.lock_message || '',
-      lock_audio: row.lock_audio || ''
+      lock_audio: row.lock_audio || '',
+      priority: row.priority || 0,
+      min_duration: row.min_duration || 0,
+      watch_limit: row.watch_limit !== undefined ? row.watch_limit : 3
     };
   }
   try {
     for (const item of fs.readdirSync(MEDIA_PATH)) {
       if (fs.statSync(path.join(MEDIA_PATH, item)).isDirectory() && !scheduleMap[item]) {
-        scheduleMap[item] = { start_time: '', end_time: '', lock_message: '', lock_audio: '' };
+        scheduleMap[item] = { start_time: '', end_time: '', lock_message: '', lock_audio: '', priority: 0, min_duration: 0, watch_limit: 3 };
       }
     }
   } catch { /* ignore */ }
@@ -61,8 +64,17 @@ router.get('/admin-api/schedules', async (req, res) => {
 });
 
 router.post('/admin-api/schedules', async (req, res) => {
-  const { playlist, start_time, end_time, lock_message, lock_audio, priority } = req.body || {};
-  await db.upsertSchedule(playlist, start_time || '', end_time || '', lock_message || '', lock_audio || '', parseInt(priority || 0));
+  const { playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit } = req.body || {};
+  await db.upsertSchedule(
+    playlist, 
+    start_time || '', 
+    end_time || '', 
+    lock_message || '', 
+    lock_audio || '', 
+    parseInt(priority || 0),
+    parseInt(min_duration || 0),
+    parseInt(watch_limit !== undefined ? watch_limit : 3)
+  );
   res.json({ success: true });
 });
 

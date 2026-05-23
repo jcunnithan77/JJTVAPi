@@ -46,6 +46,9 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN lock_message TEXT`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN lock_audio TEXT`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN priority INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN min_duration INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN watch_limit INTEGER DEFAULT 3`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE daily_playlist_progress ADD COLUMN watched_duration INTEGER DEFAULT 0`); } catch(e) {}
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS force_lock_profiles (
@@ -84,6 +87,7 @@ async function initDb() {
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_message', '')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_audio', '')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_image', '')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('stream_through_lan', 'false')");
 
   // Overlay defaults
   await db.run("INSERT OR IGNORE INTO overlay_config (key, value) VALUES ('enabled', 'false')");
@@ -129,10 +133,10 @@ async function getSchedule(playlist) {
   return await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
-async function upsertSchedule(playlist, startTime, endTime, lockMessage = '', lockAudio = '', priority = 0) {
+async function upsertSchedule(playlist, startTime, endTime, lockMessage = '', lockAudio = '', priority = 0, minDuration = 0, watchLimit = 3) {
   const db = await getDb();
-  await db.run(`INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority) VALUES (?, ?, ?, ?, ?, ?)`, 
-    [playlist, startTime, endTime, lockMessage, lockAudio, priority]);
+  await db.run(`INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
+    [playlist, startTime, endTime, lockMessage, lockAudio, priority, minDuration, watchLimit]);
 }
 
 async function deleteSchedule(playlist) {
@@ -335,19 +339,44 @@ async function getPlaylistsForDisplay() {
   }
 
   const placeholders = activePriority.map(() => '?').join(',');
+  
+  // Get active priority schedules to check their completion requirements
+  const activeSchedules = await db.all(
+    `SELECT playlist, min_duration FROM schedules WHERE playlist IN (${placeholders})`,
+    activePriority
+  );
+  const minDurationMap = {};
+  for (const s of activeSchedules) {
+    minDurationMap[s.playlist] = s.min_duration || 0;
+  }
+
   const completionRows = await db.all(
-    `SELECT playlist, completed FROM daily_playlist_progress WHERE date = ? AND playlist IN (${placeholders})`,
+    `SELECT playlist, completed, watched_duration FROM daily_playlist_progress WHERE date = ? AND playlist IN (${placeholders})`,
     [today, ...activePriority]
   );
   
-  const completedSet = new Set(completionRows.filter(r => r.completed === 1).map(r => r.playlist));
+  const completedSet = new Set();
+  for (const row of completionRows) {
+    const minDurMins = minDurationMap[row.playlist] || 0;
+    if (row.completed === 1) {
+      completedSet.add(row.playlist);
+    } else if (minDurMins > 0 && row.watched_duration >= minDurMins * 60) {
+      completedSet.add(row.playlist);
+      // Mark as completed in DB
+      await db.run(
+        `UPDATE daily_playlist_progress SET completed = 1 WHERE playlist = ? AND date = ?`,
+        [row.playlist, today]
+      );
+    }
+  }
+
   const allDone = activePriority.every(p => completedSet.has(p));
 
   if (allDone) {
     return { mode: 'fallback', playlists: null, excludeScheduled: scheduledNames };
   }
 
-  return { mode: 'priority', playlists: activePriority };
+  return { mode: 'priority', playlists: activePriority.filter(p => !completedSet.has(p)) };
 }
 
 async function isPlaylistAllowed(name) {
@@ -396,6 +425,19 @@ async function deleteLockProfile(id) {
   await db.run(`DELETE FROM force_lock_profiles WHERE id = ?`, [id]);
 }
 
+function parseDurationToSeconds(durationStr) {
+  if (!durationStr) return 0;
+  const parts = durationStr.split(':').map(Number);
+  if (parts.some(isNaN)) return 0;
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  } else if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  if (parts.length === 1) return parts[0];
+  return 0;
+}
+
 // --- Video Watch Progress ---
 async function recordVideoWatch(vhash, playlist) {
   const db = await getDb();
@@ -407,6 +449,22 @@ async function recordVideoWatch(vhash, playlist) {
       last_watched = CURRENT_TIMESTAMP
   `, [vhash, playlist]);
   const row = await db.get(`SELECT watch_count FROM video_watch_log WHERE vhash=? AND playlist=?`, [vhash, playlist]);
+
+  // Update daily watched duration
+  const video = await db.get(`SELECT duration FROM media_cache WHERE vhash = ?`, [vhash]);
+  if (video && video.duration) {
+    const seconds = parseDurationToSeconds(video.duration);
+    if (seconds > 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      await db.run(`
+        INSERT INTO daily_playlist_progress (playlist, date, completed, watched_duration)
+        VALUES (?, ?, 0, ?)
+        ON CONFLICT(playlist, date) DO UPDATE SET
+          watched_duration = watched_duration + ?
+      `, [playlist, today, seconds, seconds]);
+    }
+  }
+
   return row ? row.watch_count : 1;
 }
 

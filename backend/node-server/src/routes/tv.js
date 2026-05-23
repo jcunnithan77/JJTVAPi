@@ -9,6 +9,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
+const os = require('os');
 const db = require('../db');
 const { registerVideo, getOrCreateHls, HLS_CACHE_PATH, getVideoPath } = require('../hls');
 
@@ -45,24 +46,43 @@ function getThumbnail(dir, videoFile = null) {
   return null;
 }
 
+function getLocalIpAddress() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
 router.get('/api/status', async (req, res) => {
   try {
     const sleepStatus = await db.isSystemAsleep();
-    if (sleepStatus) {
-      res.json({
-        locked: true,
-        message: sleepStatus.message || 'Time for bed!',
-        audio: sleepStatus.audio || '',
-        image: sleepStatus.image || ''
-      });
-    } else {
-      res.json({
-        locked: false,
-        message: '',
-        audio: '',
-        image: ''
-      });
+    const streamThroughLan = (await db.getSetting('stream_through_lan')) === 'true';
+    const lanIp = getLocalIpAddress();
+    const port = req.socket.localPort || process.env.PORT || 5000;
+    const lanUrl = `http://${lanIp}:${port}`;
+
+    let response = {
+      locked: false,
+      message: '',
+      audio: '',
+      image: '',
+      stream_through_lan: streamThroughLan,
+      lan_ip: lanUrl
+    };
+
+    if (sleepStatus && sleepStatus.locked) {
+      response.locked = true;
+      response.message = sleepStatus.message || 'Time for bed!';
+      response.audio = sleepStatus.audio || '';
+      response.image = sleepStatus.image || '';
     }
+
+    res.json(response);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -151,7 +171,10 @@ router.post('/api/video/watched', async (req, res) => {
   try {
     const count = await db.recordVideoWatch(vhash, playlist);
 
-    if (count >= 3) {
+    const schedule = await db.getSchedule(playlist);
+    const watchLimit = (schedule && schedule.watch_limit) ? schedule.watch_limit : 3;
+
+    if (count >= watchLimit) {
       await db.demoteVideo(vhash, playlist);
     }
 
@@ -165,7 +188,6 @@ router.post('/api/video/watched', async (req, res) => {
       // Full rotation complete → reset all locks
       await db.resetPlaylistWatchLog(playlist);
       // Also check if this is a priority playlist and mark as completed
-      const schedule = await db.getSchedule(playlist);
       if (schedule && schedule.start_time) {
         await db.markPlaylistCompleted(playlist);
       }
@@ -203,6 +225,7 @@ router.get('/api/search', async (req, res) => {
         thumbnail: v.thumbnail || '',
         url: `/stream/hash/${v.vhash}`,
         hls_url: `/hls/stream/${v.vhash}/index.m3u8`,
+        vhash: v.vhash,
       });
     }
 
