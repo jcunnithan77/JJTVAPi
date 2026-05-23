@@ -917,13 +917,18 @@ def admin_set_overlay():
 # --- STATS ---
 @app.route('/admin-api/stats', methods=['GET'])
 def get_stats():
-    total, used, free = shutil.disk_usage(MEDIA_PATH)
+    try:
+        total, used, free = shutil.disk_usage(os.path.abspath(MEDIA_PATH))
+    except Exception as e:
+        print(f"Error getting disk usage: {e}")
+        total, used, free = (1, 1, 1) # Prevent division by zero
+    
     return jsonify({
         'disk': {
             'total_gb': round(total / (1024 ** 3), 2),
             'used_gb': round(used / (1024 ** 3), 2),
             'free_gb': round(free / (1024 ** 3), 2),
-            'percent_used': round((used / total) * 100, 1)
+            'percent_used': round((used / total) * 100, 1) if total > 1 else 0
         },
         'downloads': active_downloads,
         'queue_size': download_queue.qsize()
