@@ -46,16 +46,37 @@ function getThumbnail(dir, videoFile = null) {
   return null;
 }
 
-function getLocalIpAddress() {
+function getLocalIpAddress(reqIp = '') {
   const interfaces = os.networkInterfaces();
+  let bestIp = null;
+  let fallbackIp = null;
+
+  // Clean up reqIp (e.g. ::ffff:192.168.1.5 -> 192.168.1.5)
+  const cleanReqIp = reqIp.replace(/^.*:/, '');
+  const reqPrefix = cleanReqIp.split('.').slice(0, 3).join('.');
+
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
       if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
+        const ip = iface.address;
+        
+        // 1. Exact subnet match with the requester (TV)
+        if (reqPrefix && ip.startsWith(reqPrefix + '.')) {
+          return ip;
+        }
+
+        // 2. Prioritize common home LANs (192.168.x.x) over Docker/VPNs
+        if (ip.startsWith('192.168.')) {
+          bestIp = ip;
+        } else if (!bestIp && (ip.startsWith('10.') || ip.startsWith('172.'))) {
+          fallbackIp = ip;
+        } else if (!bestIp && !fallbackIp) {
+          fallbackIp = ip;
+        }
       }
     }
   }
-  return 'localhost';
+  return bestIp || fallbackIp || 'localhost';
 }
 
 router.get('/api/status', async (req, res) => {
@@ -63,7 +84,7 @@ router.get('/api/status', async (req, res) => {
     const sleepStatus = await db.isSystemAsleep();
     const allSettings = await db.getSettings();
     const streamThroughLan = allSettings['stream_through_lan'] === 'true';
-    const lanIp = getLocalIpAddress();
+    const lanIp = getLocalIpAddress(req.ip);
     const port = req.socket.localPort || process.env.PORT || 5000;
     const lanUrl = `http://${lanIp}:${port}`;
 

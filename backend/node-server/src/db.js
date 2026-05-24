@@ -280,7 +280,8 @@ async function isSystemAsleep() {
   if (s.sleep_slots) {
     try {
       const slots = JSON.parse(s.sleep_slots);
-      if (Array.isArray(slots) && slots.length > 0) {
+      if (Array.isArray(slots)) {
+        if (slots.length === 0) return false;
         for (const slot of slots) {
           if (!slot.start || !slot.end) continue;
           const startM = _parseMins(slot.start);
