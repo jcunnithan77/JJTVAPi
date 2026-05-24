@@ -61,7 +61,8 @@ function getLocalIpAddress() {
 router.get('/api/status', async (req, res) => {
   try {
     const sleepStatus = await db.isSystemAsleep();
-    const streamThroughLan = (await db.getSetting('stream_through_lan')) === 'true';
+    const allSettings = await db.getSettings();
+    const streamThroughLan = allSettings['stream_through_lan'] === 'true';
     const lanIp = getLocalIpAddress();
     const port = req.socket.localPort || process.env.PORT || 5000;
     const lanUrl = `http://${lanIp}:${port}`;
