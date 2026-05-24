@@ -302,8 +302,15 @@ async function isSystemAsleep() {
     }
   }
 
-  const startM = _parseMins(s.sleep_start || '22:00');
-  const endM = _parseMins(s.sleep_end || '06:00');
+  const startStr = s.sleep_start === undefined ? '22:00' : s.sleep_start;
+  const endStr = s.sleep_end === undefined ? '06:00' : s.sleep_end;
+
+  if (startStr === '' || endStr === '' || startStr === 'false') {
+    return false; // Sleep mode disabled
+  }
+
+  const startM = _parseMins(startStr);
+  const endM = _parseMins(endStr);
   const isLegacyActive = startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
   if (isLegacyActive) {
     return { locked: true, message: defaultMsg, audio: defaultAudio, image: defaultImage };
