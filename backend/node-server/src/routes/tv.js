@@ -84,7 +84,10 @@ router.get('/api/status', async (req, res) => {
     const sleepStatus = await db.isSystemAsleep();
     const allSettings = await db.getSettings();
     const streamThroughLan = allSettings['stream_through_lan'] === 'true';
-    const lanIp = getLocalIpAddress(req.ip);
+    const serverLanIpOverride = allSettings['server_lan_ip'];
+    const lanIp = (serverLanIpOverride && serverLanIpOverride.trim() !== '') 
+        ? serverLanIpOverride.trim() 
+        : getLocalIpAddress(req.ip);
     const port = req.socket.localPort || process.env.PORT || 5000;
     const lanUrl = `http://${lanIp}:${port}`;
 
