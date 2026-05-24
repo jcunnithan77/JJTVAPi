@@ -206,6 +206,14 @@ function _parseMins(str) {
   return h * 60 + m;
 }
 
+async function searchMediaCache(query) {
+  const db = await getDb();
+  return await db.all(`
+    SELECT * FROM media_cache 
+    WHERE title LIKE ? OR filename LIKE ?
+  `, [`%${query}%`, `%${query}%`]);
+}
+
 async function getNowInConfiguredTimezone() {
   const now = new Date();
   const db = await getDb();
@@ -510,7 +518,7 @@ module.exports = {
   initDb, getSettings, setSetting, getOverlay, setOverlay,
   getSchedules, getSchedule, upsertSchedule, deleteSchedule,
   getScheduledDownloads, createScheduledDownload, updateScheduledDownloadStatus, cancelScheduledDownload,
-  updateMediaCache, getCachedPlaylists, getCachedVideos, clearOldCache,
+  updateMediaCache, getCachedPlaylists, getCachedVideos, clearOldCache, searchMediaCache,
   getVideoPathByHash,
   isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay,
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,

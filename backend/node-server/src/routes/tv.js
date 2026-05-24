@@ -230,11 +230,7 @@ router.get('/api/search', async (req, res) => {
   if (!query) return res.json([]);
 
   try {
-    const dbInst = await db.getDb();
-    const results = await dbInst.all(`
-      SELECT * FROM media_cache 
-      WHERE title LIKE ? OR filename LIKE ?
-    `, [`%${query}%`, `%${query}%`]);
+    const results = await db.searchMediaCache(query);
 
     const result = [];
     for (const v of results) {
@@ -256,6 +252,7 @@ router.get('/api/search', async (req, res) => {
 
     res.json(result);
   } catch (e) {
+    console.error(`[TV-API] Search error:`, e);
     res.status(500).json({ error: e.message });
   }
 });
