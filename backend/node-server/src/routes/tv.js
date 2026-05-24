@@ -358,6 +358,10 @@ router.get('/hls/stream/:hash/index.m3u8', async (req, res) => {
 
 router.get('/hls/stream/:hash/:segment', (req, res) => {
   const { hash, segment } = req.params;
+  
+  // Log the chunk request to the backend console
+  console.log(`[TV-API] GET HLS Chunk: ${segment} (hash: ${hash}) from ${req.ip}`);
+
   if (!segment.endsWith('.ts')) return res.status(400).send('Invalid segment');
   const segPath = path.join(HLS_CACHE_PATH, hash, segment);
   if (!fs.existsSync(segPath)) return res.status(404).send('Segment not found');
