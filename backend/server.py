@@ -58,9 +58,35 @@ def init_db():
     # Settings: key-val
     c.execute('''CREATE TABLE IF NOT EXISTS settings
                  (key TEXT PRIMARY KEY, value TEXT)''')
-    # Schedules: playlist_name -> start_time, end_time
+    # Schedules: playlist_name -> start_time, end_time, priority, min_duration, watch_limit
     c.execute('''CREATE TABLE IF NOT EXISTS schedules
-                 (playlist TEXT PRIMARY KEY, start_time TEXT, end_time TEXT)''')
+                 (playlist TEXT PRIMARY KEY,
+                  start_time TEXT,
+                  end_time TEXT,
+                  lock_message TEXT DEFAULT '',
+                  lock_audio TEXT DEFAULT '',
+                  priority INTEGER DEFAULT 0,
+                  min_duration INTEGER DEFAULT 0,
+                  watch_limit INTEGER DEFAULT 3)''')
+    # Migrate old schema: add columns if missing
+    for col, col_def in [
+        ('lock_message', 'TEXT DEFAULT ""'),
+        ('lock_audio',   'TEXT DEFAULT ""'),
+        ('priority',     'INTEGER DEFAULT 0'),
+        ('min_duration', 'INTEGER DEFAULT 0'),
+        ('watch_limit',  'INTEGER DEFAULT 3'),
+    ]:
+        try:
+            c.execute(f'ALTER TABLE schedules ADD COLUMN {col} {col_def}')
+        except Exception:
+            pass  # column already exists
+    # Daily playlist progress for quota tracking
+    c.execute('''CREATE TABLE IF NOT EXISTS daily_playlist_progress
+                 (playlist TEXT,
+                  date TEXT,
+                  watched_duration INTEGER DEFAULT 0,
+                  completed INTEGER DEFAULT 0,
+                  PRIMARY KEY (playlist, date))''')
     # Scheduled downloads
     c.execute('''CREATE TABLE IF NOT EXISTS scheduled_downloads
                  (id TEXT PRIMARY KEY,
@@ -121,31 +147,117 @@ def is_system_asleep():
     except:
         return False
 
-def is_playlist_allowed(playlist_name):
+def get_today():
+    return datetime.datetime.now().strftime('%Y-%m-%d')
+
+
+def get_priority_display_mode():
+    """Returns ('all', None) | ('priority', [playlist,...]) | ('fallback', {scheduled_set})"""
     conn = get_db_connection()
-    row = conn.execute("SELECT * FROM schedules WHERE playlist = ?", (playlist_name,)).fetchone()
+    schedules = conn.execute(
+        """SELECT * FROM schedules
+           WHERE (start_time IS NOT NULL AND start_time != '')
+              OR (min_duration IS NOT NULL AND min_duration > 0)
+           ORDER BY priority DESC"""
+    ).fetchall()
+
+    if not schedules:
+        conn.close()
+        return ('all', None)
+
+    now = datetime.datetime.now().time()
+    today = get_today()
+
+    active_priority = []
+    scheduled_names = set()
+
+    for s in schedules:
+        playlist = s['playlist']
+        start_str = s['start_time'] or ''
+        end_str = s['end_time'] or ''
+        min_dur = s['min_duration'] or 0
+
+        in_window = False
+        if start_str and end_str:
+            try:
+                start = datetime.datetime.strptime(start_str, "%H:%M").time()
+                end = datetime.datetime.strptime(end_str, "%H:%M").time()
+                if start < end:
+                    in_window = (start <= now <= end)
+                else:
+                    in_window = (now >= start or now <= end)
+            except:
+                pass
+            scheduled_names.add(playlist)
+        elif min_dur > 0:
+            # No time window but has a quota — always active until quota met
+            in_window = True
+
+        if in_window:
+            active_priority.append(s)
+
+    if not active_priority:
+        conn.close()
+        return ('all', None)
+
+    # Check completion for each active priority playlist (highest priority first)
+    remaining = []
+    for s in active_priority:
+        playlist = s['playlist']
+        min_dur_mins = s['min_duration'] or 0
+
+        row = conn.execute(
+            "SELECT watched_duration, completed FROM daily_playlist_progress WHERE playlist=? AND date=?",
+            (playlist, today)
+        ).fetchone()
+
+        if row:
+            if row['completed']:
+                continue  # Already done today
+            if min_dur_mins > 0 and row['watched_duration'] >= min_dur_mins * 60:
+                # Mark completed
+                conn.execute(
+                    "UPDATE daily_playlist_progress SET completed=1 WHERE playlist=? AND date=?",
+                    (playlist, today)
+                )
+                conn.commit()
+                continue
+
+        remaining.append(playlist)
+
     conn.close()
 
-    if not row:
-        return True  # Allowed by default if no schedule
+    if not remaining:
+        # All priority playlists done — show everything except scheduled ones
+        return ('fallback', scheduled_names)
 
-    start_str = row['start_time']
-    end_str = row['end_time']
+    # Show only the SINGLE highest-priority uncompleted playlist
+    return ('priority', [remaining[0]])
 
-    if not start_str or not end_str:
+
+def is_playlist_allowed(playlist_name):
+    mode, data = get_priority_display_mode()
+    if mode == 'all':
         return True
+    if mode == 'priority':
+        return playlist_name in data
+    if mode == 'fallback':
+        return playlist_name not in data
+    return True
 
-    try:
-        now = datetime.datetime.now().time()
-        start = datetime.datetime.strptime(start_str, "%H:%M").time()
-        end = datetime.datetime.strptime(end_str, "%H:%M").time()
 
-        if start < end:
-            return start <= now <= end
-        else:
-            return now >= start or now <= end
-    except:
-        return True
+def record_watch_time(playlist, seconds):
+    """Add seconds to today's watched_duration for a playlist."""
+    today = get_today()
+    conn = get_db_connection()
+    conn.execute(
+        """INSERT INTO daily_playlist_progress (playlist, date, watched_duration, completed)
+           VALUES (?, ?, ?, 0)
+           ON CONFLICT(playlist, date) DO UPDATE SET watched_duration = watched_duration + ?""",
+        (playlist, today, seconds, seconds)
+    )
+    conn.commit()
+    conn.close()
 
 # --- DOWNLOADER WORKER ---
 def _do_download(url, target_playlist, job_id):
@@ -732,19 +844,42 @@ def manage_schedules():
         playlist = data.get('playlist')
         start = data.get('start_time', '')
         end = data.get('end_time', '')
-        c.execute("INSERT OR REPLACE INTO schedules (playlist, start_time, end_time) VALUES (?, ?, ?)",
-                  (playlist, start, end))
+        lock_message = data.get('lock_message', '')
+        lock_audio = data.get('lock_audio', '')
+        priority = int(data.get('priority', 0) or 0)
+        min_duration = int(data.get('min_duration', 0) or 0)
+        watch_limit = int(data.get('watch_limit', 3) or 3)
+        c.execute(
+            """INSERT OR REPLACE INTO schedules
+               (playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (playlist, start, end, lock_message, lock_audio, priority, min_duration, watch_limit)
+        )
         conn.commit()
 
-    schedules = {row['playlist']: {'start_time': row['start_time'], 'end_time': row['end_time']}
-                 for row in conn.execute("SELECT * FROM schedules")}
+    schedules = {
+        row['playlist']: {
+            'start_time':   row['start_time'],
+            'end_time':     row['end_time'],
+            'lock_message': row['lock_message'] or '',
+            'lock_audio':   row['lock_audio'] or '',
+            'priority':     row['priority'] or 0,
+            'min_duration': row['min_duration'] or 0,
+            'watch_limit':  row['watch_limit'] if row['watch_limit'] is not None else 3,
+        }
+        for row in conn.execute("SELECT * FROM schedules")
+    }
 
+    # Add root-level folders that have no schedule yet
     try:
         items = os.listdir(MEDIA_PATH)
-        folders = [item for item in items if os.path.isdir(os.path.join(MEDIA_PATH, item))]
-        for f in folders:
-            if f not in schedules:
-                schedules[f] = {'start_time': '', 'end_time': ''}
+        for f in sorted(items):
+            if os.path.isdir(os.path.join(MEDIA_PATH, f)) and f not in schedules:
+                schedules[f] = {
+                    'start_time': '', 'end_time': '',
+                    'lock_message': '', 'lock_audio': '',
+                    'priority': 0, 'min_duration': 0, 'watch_limit': 3
+                }
     except:
         pass
 
@@ -759,6 +894,17 @@ def delete_schedule(playlist):
     conn.commit()
     conn.close()
     return jsonify({'success': True})
+
+
+@app.route('/admin-api/force-reload', methods=['POST'])
+def force_reload():
+    """Clears daily progress so all priority quotas reset immediately."""
+    today = get_today()
+    conn = get_db_connection()
+    conn.execute("DELETE FROM daily_playlist_progress WHERE date=?", (today,))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Daily progress cleared. Priority playlists are now active again.'})
 
 
 @app.route('/admin-api/download', methods=['POST'])
