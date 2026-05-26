@@ -334,7 +334,7 @@ async function getPlaylistsForDisplay() {
   const nowM = now.getHours() * 60 + now.getMinutes();
 
   const schedules = await db.all(
-    `SELECT * FROM schedules WHERE start_time IS NOT NULL AND start_time != '' ORDER BY priority DESC`
+    `SELECT * FROM schedules WHERE (start_time IS NOT NULL AND start_time != '') OR (min_duration IS NOT NULL AND min_duration > 0) ORDER BY priority DESC`
   );
 
   const activePriority = [];
@@ -342,11 +342,18 @@ async function getPlaylistsForDisplay() {
 
   for (const s of schedules) {
     scheduledNames.add(s.playlist);
-    const startM = _parseMins(s.start_time);
-    const endM   = _parseMins(s.end_time);
-    const inWindow = startM < endM
-      ? (nowM >= startM && nowM <= endM)
-      : (nowM >= startM || nowM <= endM);
+    let inWindow = false;
+    if (s.start_time && s.start_time !== '' && s.end_time && s.end_time !== '') {
+      const startM = _parseMins(s.start_time);
+      const endM   = _parseMins(s.end_time);
+      inWindow = startM < endM
+        ? (nowM >= startM && nowM <= endM)
+        : (nowM >= startM || nowM <= endM);
+    } else if (s.min_duration && s.min_duration > 0) {
+      // If no valid time window, but there's a quota, it's always in-window until quota is met
+      inWindow = true; 
+    }
+    
     if (inWindow) activePriority.push(s.playlist);
   }
 
