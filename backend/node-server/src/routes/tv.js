@@ -97,7 +97,8 @@ router.get('/api/status', async (req, res) => {
       audio: '',
       image: '',
       stream_through_lan: streamThroughLan,
-      lan_ip: lanUrl
+      lan_ip: lanUrl,
+      force_reload: Number(allSettings['force_reload_timestamp'] || 0)
     };
 
     if (sleepStatus && sleepStatus.locked) {

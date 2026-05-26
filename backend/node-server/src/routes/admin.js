@@ -163,6 +163,15 @@ router.post('/admin-api/download', async (req, res) => {
   res.json({ success: true, job_id: jobId });
 });
 
+router.post('/admin-api/force-reload', async (req, res) => {
+  try {
+    await db.setSetting('force_reload_timestamp', Date.now().toString());
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/admin-api/download/scheduled', async (req, res) => {
   res.json(await db.getScheduledDownloads());
 });
