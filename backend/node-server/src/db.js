@@ -399,7 +399,12 @@ async function getPlaylistsForDisplay() {
     return { mode: 'fallback', playlists: null, excludeScheduled: scheduledNames };
   }
 
-  return { mode: 'priority', playlists: activePriority.filter(p => !completedSet.has(p)) };
+  const remaining = activePriority.filter(p => !completedSet.has(p));
+  if (remaining.length > 0) {
+    return { mode: 'priority', playlists: [remaining[0]] };
+  }
+  
+  return { mode: 'priority', playlists: [] };
 }
 
 async function isPlaylistAllowed(name) {
@@ -521,6 +526,13 @@ async function getVideoPathByHash(hash) {
   return row ? row.vpath : null;
 }
 
+async function clearDailyProgress() {
+  const db = await getDb();
+  const today = new Date().toISOString().slice(0, 10);
+  await db.run(`DELETE FROM daily_playlist_progress WHERE date = ?`, [today]);
+  console.log('[DB] Cleared daily_playlist_progress for', today);
+}
+
 module.exports = {
   initDb, getSettings, setSetting, getOverlay, setOverlay,
   getSchedules, getSchedule, upsertSchedule, deleteSchedule,
@@ -529,5 +541,6 @@ module.exports = {
   getVideoPathByHash,
   isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay,
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
-  recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted
+  recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted,
+  clearDailyProgress
 };

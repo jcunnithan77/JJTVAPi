@@ -83,6 +83,15 @@ router.delete('/admin-api/schedules/:playlist(*)', async (req, res) => {
   res.json({ success: true });
 });
 
+router.post('/admin-api/force-reload', async (req, res) => {
+  try {
+    await db.clearDailyProgress();
+    res.json({ success: true, message: 'Daily progress cleared. Priority playlists are now active again.' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // Force Lock Profiles
 // ─────────────────────────────────────────────────────────────
