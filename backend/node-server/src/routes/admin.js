@@ -86,6 +86,7 @@ router.delete('/admin-api/schedules/:playlist(*)', async (req, res) => {
 router.post('/admin-api/force-reload', async (req, res) => {
   try {
     await db.clearDailyProgress();
+    await db.setSetting('force_reload_timestamp', Date.now().toString());
     res.json({ success: true, message: 'Daily progress cleared. Priority playlists are now active again.' });
   } catch (e) {
     res.status(500).json({ error: e.message });
