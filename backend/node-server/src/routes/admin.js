@@ -404,9 +404,29 @@ router.get('/admin-api/media', async (req, res) => {
           playlist: v.playlist,
           duration: v.duration
         }))
-
       });
     }
+
+    if (db.getLiveStreams) {
+      const liveStreams = await db.getLiveStreams();
+      if (liveStreams && liveStreams.length > 0) {
+        result.push({
+          playlist: 'Live',
+          videos: liveStreams.map(s => ({
+            filename: s.title,
+            title: s.title,
+            size_mb: 0,
+            thumbnail: s.thumbnail,
+            vpath: '',
+            vhash: 'live_' + s.id,
+            url: s.url,
+            playlist: 'Live',
+            duration: 'Live'
+          }))
+        });
+      }
+    }
+
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
