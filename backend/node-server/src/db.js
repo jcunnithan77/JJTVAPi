@@ -358,6 +358,7 @@ async function getPlaylistsForDisplay() {
   const activeTimed = [];
   const activeTimeless = [];
   const scheduledNames = new Set();
+  const strictTimedNames = new Set();
   const minDurationMap = {};
 
   for (const s of schedules) {
@@ -369,6 +370,7 @@ async function getPlaylistsForDisplay() {
 
     if (s.start_time && s.start_time !== '' && s.end_time && s.end_time !== '') {
       isTimed = true;
+      strictTimedNames.add(s.playlist);
       const startM = _parseMins(s.start_time);
       const endM   = _parseMins(s.end_time);
       inWindow = startM < endM
@@ -391,7 +393,7 @@ async function getPlaylistsForDisplay() {
   const allActive = [...activeTimed, ...activeTimeless];
   
   if (allActive.length === 0) {
-    return { mode: 'fallback', playlists: null, excludeScheduled: scheduledNames };
+    return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames };
   }
 
   const placeholders = allActive.map(() => '?').join(',');
@@ -429,7 +431,7 @@ async function getPlaylistsForDisplay() {
   }
 
   // 3. Fallback to unscheduled
-  return { mode: 'fallback', playlists: null, excludeScheduled: scheduledNames };
+  return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames };
 }
 
 async function isPlaylistAllowed(name) {
