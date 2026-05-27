@@ -355,48 +355,49 @@ async function getPlaylistsForDisplay() {
     `SELECT * FROM schedules ORDER BY priority DESC`
   );
 
-  const activePriority = [];
+  const activeTimed = [];
+  const activeTimeless = [];
   const scheduledNames = new Set();
+  const minDurationMap = {};
 
   for (const s of schedules) {
     scheduledNames.add(s.playlist);
+    minDurationMap[s.playlist] = s.min_duration || 0;
+    
+    let isTimed = false;
     let inWindow = false;
+
     if (s.start_time && s.start_time !== '' && s.end_time && s.end_time !== '') {
+      isTimed = true;
       const startM = _parseMins(s.start_time);
       const endM   = _parseMins(s.end_time);
       inWindow = startM < endM
         ? (nowM >= startM && nowM <= endM)
         : (nowM >= startM || nowM <= endM);
-    } else if (s.min_duration && s.min_duration > 0) {
-      // If no valid time window, but there's a quota, it's always in-window until quota is met
-      inWindow = true; 
     } else {
-      // No time or duration defined, assume it's always active
-      inWindow = true;
+      // No time defined, always active
+      inWindow = true; 
     }
     
-    if (inWindow) activePriority.push(s.playlist);
+    if (inWindow) {
+      if (isTimed) {
+        activeTimed.push(s.playlist);
+      } else {
+        activeTimeless.push(s.playlist);
+      }
+    }
   }
 
-  if (activePriority.length === 0) {
-    return { mode: 'all', playlists: null };
-  }
-
-  const placeholders = activePriority.map(() => '?').join(',');
+  const allActive = [...activeTimed, ...activeTimeless];
   
-  // Get active priority schedules to check their completion requirements
-  const activeSchedules = await db.all(
-    `SELECT playlist, min_duration FROM schedules WHERE playlist IN (${placeholders})`,
-    activePriority
-  );
-  const minDurationMap = {};
-  for (const s of activeSchedules) {
-    minDurationMap[s.playlist] = s.min_duration || 0;
+  if (allActive.length === 0) {
+    return { mode: 'fallback', playlists: null, excludeScheduled: scheduledNames };
   }
 
+  const placeholders = allActive.map(() => '?').join(',');
   const completionRows = await db.all(
     `SELECT playlist, completed, watched_duration FROM daily_playlist_progress WHERE date = ? AND playlist IN (${placeholders})`,
-    [today, ...activePriority]
+    [today, ...allActive]
   );
   
   const completedSet = new Set();
@@ -414,18 +415,21 @@ async function getPlaylistsForDisplay() {
     }
   }
 
-  const allDone = activePriority.every(p => completedSet.has(p));
+  const pendingTimed = activeTimed.filter(p => !completedSet.has(p));
+  const pendingTimeless = activeTimeless.filter(p => !completedSet.has(p));
 
-  if (allDone) {
-    return { mode: 'fallback', playlists: null, excludeScheduled: scheduledNames };
-  }
-
-  const remaining = activePriority.filter(p => !completedSet.has(p));
-  if (remaining.length > 0) {
-    return { mode: 'priority', playlists: [remaining[0]] };
+  // 1. If any timed schedule is active, ONLY that playlist should show
+  if (pendingTimed.length > 0) {
+    return { mode: 'priority', playlists: [pendingTimed[0]] };
   }
   
-  return { mode: 'priority', playlists: [] };
+  // 2. Otherwise, if there is a timeless schedule, it should show
+  if (pendingTimeless.length > 0) {
+    return { mode: 'priority', playlists: [pendingTimeless[0]] };
+  }
+
+  // 3. Fallback to unscheduled
+  return { mode: 'fallback', playlists: null, excludeScheduled: scheduledNames };
 }
 
 async function isPlaylistAllowed(name) {
