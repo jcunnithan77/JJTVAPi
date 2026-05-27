@@ -214,7 +214,7 @@ router.post('/api/video/watched', async (req, res) => {
       // Full rotation complete → reset all locks
       await db.resetPlaylistWatchLog(playlist);
       // Also check if this is a priority playlist and mark as completed
-      if (schedule && schedule.start_time) {
+      if (schedule) {
         await db.markPlaylistCompleted(playlist);
       }
     }
