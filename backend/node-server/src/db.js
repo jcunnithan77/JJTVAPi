@@ -443,8 +443,15 @@ async function getPlaylistsForDisplay() {
 async function isPlaylistAllowed(name) {
   const result = await getPlaylistsForDisplay();
   if (result.mode === 'all') return true;
-  if (result.mode === 'priority') return result.playlists.includes(name);
-  if (result.mode === 'fallback') return !result.excludeScheduled.has(name);
+  if (result.mode === 'priority') {
+    return result.playlists.some(p => name === p || name.startsWith(p + '/'));
+  }
+  if (result.mode === 'fallback') {
+    for (const ex of result.excludeScheduled) {
+      if (name === ex || name.startsWith(ex + '/')) return false;
+    }
+    return true;
+  }
   return true;
 }
 
