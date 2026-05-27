@@ -53,13 +53,17 @@ router.get('/admin-api/schedules', async (req, res) => {
       watch_limit: row.watch_limit !== undefined ? row.watch_limit : 3
     };
   }
+  
+  // Ensure all known playlists from the media cache are in the schedule map with default values
   try {
-    for (const item of fs.readdirSync(MEDIA_PATH)) {
-      if (fs.statSync(path.join(MEDIA_PATH, item)).isDirectory() && !scheduleMap[item]) {
-        scheduleMap[item] = { start_time: '', end_time: '', lock_message: '', lock_audio: '', priority: 0, min_duration: 0, watch_limit: 3 };
+    const cached = await db.getCachedPlaylists();
+    for (const p of cached) {
+      if (!scheduleMap[p.name]) {
+        scheduleMap[p.name] = { start_time: '', end_time: '', lock_message: '', lock_audio: '', priority: 0, min_duration: 0, watch_limit: 3 };
       }
     }
   } catch { /* ignore */ }
+  
   res.json(scheduleMap);
 });
 

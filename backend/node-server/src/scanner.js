@@ -51,25 +51,17 @@ async function scanAll(mediaPath) {
     walk(mediaPath);
     const folders = Array.from(foldersWithVideos);
 
-    // Group folders by their top-level root directory
-    const rootPlaylists = new Set(folders.map(f => f.split(/[/\\]/)[0]));
-
-    // Clear caches for these root playlists before re-inserting
-    for (const root of rootPlaylists) {
-      await db.clearOldCache(root);
-    }
-
-    for (const folder of folders) {
-      const rootPlaylist = folder.split(/[/\\]/)[0];
-      await scanFolder(mediaPath, folder, rootPlaylist);
-    }
-
     // Clean up DB: remove any playlists that no longer exist on disk
     const cachedPlaylists = await db.getCachedPlaylists();
     for (const cached of cachedPlaylists) {
-      if (!rootPlaylists.has(cached.name)) {
+      if (!foldersWithVideos.has(cached.name) && cached.name !== '.') {
         await db.clearOldCache(cached.name);
       }
+    }
+
+    for (const folder of folders) {
+      await db.clearOldCache(folder);
+      await scanFolder(mediaPath, folder);
     }
 
     console.log('[Scanner] Full scan complete.');
