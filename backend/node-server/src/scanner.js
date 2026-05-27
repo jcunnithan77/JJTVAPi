@@ -39,7 +39,7 @@ async function scanAll(mediaPath) {
         let hasVideo = false;
         for (const item of items) {
           if (item.isDirectory()) {
-            walk(path.join(dir, item.name), path.join(relPath, item.name));
+            walk(path.join(dir, item.name), relPath ? relPath + '/' + item.name : item.name);
           } else if (item.isFile() && VIDEO_EXTENSIONS.has(path.extname(item.name).toLowerCase())) {
             hasVideo = true;
           }
