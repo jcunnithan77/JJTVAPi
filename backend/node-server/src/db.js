@@ -58,7 +58,13 @@ async function initDb() {
       audio_url TEXT DEFAULT '',
       message TEXT DEFAULT '',
       duration_minutes INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      activated_at TEXT DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS live_streams (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      thumbnail TEXT DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS daily_playlist_progress (
       playlist TEXT NOT NULL, 
@@ -570,5 +576,34 @@ module.exports = {
   isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay,
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
   recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted,
-  clearDailyProgress
+  clearDailyProgress,
+  getLiveStreams, addLiveStream, deleteLiveStream
 };
+
+// --- Live Streams ---
+async function getLiveStreams() {
+  const db = await getDb();
+  return await db.all(`SELECT * FROM live_streams ORDER BY id ASC`);
+}
+
+async function addLiveStream(id, title, url, thumbnail) {
+  const db = await getDb();
+  if (id) {
+    await db.run(
+      `UPDATE live_streams SET title = ?, url = ?, thumbnail = ? WHERE id = ?`,
+      [title, url, thumbnail || '', id]
+    );
+    return id;
+  } else {
+    const result = await db.run(
+      `INSERT INTO live_streams (title, url, thumbnail) VALUES (?, ?, ?)`,
+      [title, url, thumbnail || '']
+    );
+    return result.lastID;
+  }
+}
+
+async function deleteLiveStream(id) {
+  const db = await getDb();
+  await db.run(`DELETE FROM live_streams WHERE id = ?`, [id]);
+}

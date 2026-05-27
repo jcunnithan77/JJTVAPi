@@ -749,4 +749,34 @@ router.post('/admin-api/create-playlist', uploadVideo.fields([
   }
 });
 
+// --- Live Streams ---
+router.get('/admin-api/live', async (req, res) => {
+  try {
+    const streams = await db.getLiveStreams();
+    res.json(streams);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/admin-api/live', async (req, res) => {
+  try {
+    const { id, title, url, thumbnail } = req.body;
+    if (!title || !url) return res.status(400).json({ error: 'Title and URL are required' });
+    const newId = await db.addLiveStream(id, title, url, thumbnail);
+    res.json({ success: true, id: newId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/admin-api/live/:id', async (req, res) => {
+  try {
+    await db.deleteLiveStream(req.params.id);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = { router, setMediaPath };

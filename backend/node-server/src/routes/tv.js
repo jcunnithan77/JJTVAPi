@@ -139,6 +139,26 @@ router.get('/api/playlists', async (req, res) => {
         lock_audio: ''
       });
     }
+
+    // Check Live Streams
+    if (db.getLiveStreams) {
+      const liveStreams = await db.getLiveStreams();
+      if (liveStreams && liveStreams.length > 0) {
+        const isLiveAllowed = await db.isPlaylistAllowed('Live');
+        if (isLiveAllowed) {
+          result.push({
+            id: 'Live',
+            name: 'Live TV',
+            count: liveStreams.length,
+            thumbnail: null,
+            locked: false,
+            lock_message: '',
+            lock_audio: ''
+          });
+        }
+      }
+    }
+
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -155,7 +175,24 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
   }
 
   try {
-    const videos = await db.getCachedVideos(playlistId);
+    let videos = [];
+    if (playlistId === 'Live' && db.getLiveStreams) {
+      const streams = await db.getLiveStreams();
+      videos = streams.map(s => ({
+        filename: s.title,
+        title: s.title,
+        url: s.url,
+        hls_url: s.url, // ExoPlayer will play the direct URL
+        thumbnail: s.thumbnail,
+        duration: '',
+        size_mb: 0,
+        vhash: 'live_' + s.id,
+        vpath: '',
+        playlist: 'Live'
+      }));
+    } else {
+      videos = await db.getCachedVideos(playlistId);
+    }
     
     const watchLog = await db.getPlaylistWatchLog(playlistId);
     const demotedSet = new Set(watchLog.filter(r => r.demoted === 1).map(r => r.vhash));
@@ -172,8 +209,8 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       return {
         filename: v.filename,
         title: v.title,
-        url: `/stream/hash/${v.vhash}`,
-        hls_url: `/hls/stream/${v.vhash}/index.m3u8`,
+        url: v.url || `/stream/hash/${v.vhash}`,
+        hls_url: v.hls_url || `/hls/stream/${v.vhash}/index.m3u8`,
         thumbnail: v.thumbnail,
         duration: v.duration,
         size_mb: v.size_mb,
