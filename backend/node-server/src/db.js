@@ -57,6 +57,7 @@ async function initDb() {
       icon_url TEXT DEFAULT '',
       audio_url TEXT DEFAULT '',
       message TEXT DEFAULT '',
+      duration_minutes INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS daily_playlist_progress (
@@ -74,7 +75,10 @@ async function initDb() {
       PRIMARY KEY (vhash, playlist)
     );
   `);
+  try { await db.exec(`ALTER TABLE force_lock_profiles ADD COLUMN duration_minutes INTEGER DEFAULT 0`); } catch(e) {}
+
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_profile_id', '')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_activated_at', '')");
 
   // Default settings
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('sleep_start', '22:00')");
@@ -262,22 +266,36 @@ async function isSystemAsleep() {
 
   if (s.force_sleep === 'true') {
     const profileId = s.force_lock_profile_id;
+    const activatedAt = parseInt(s.force_lock_activated_at || '0');
+    
     let profileData = {};
     if (profileId) {
       const profile = await getLockProfile(parseInt(profileId));
       if (profile) {
+        // Check duration expiry
+        if (profile.duration_minutes > 0 && activatedAt > 0) {
+          const expiresAt = activatedAt + (profile.duration_minutes * 60 * 1000);
+          if (Date.now() >= expiresAt) {
+            console.log(`[DB] Force lock profile ${profile.name} expired. Unlocking...`);
+            await setSetting('force_sleep', 'false');
+            await setSetting('force_lock_profile_id', '');
+            await setSetting('force_lock_activated_at', '');
+            return false; // Automatically unlock
+          }
+        }
+      
         profileData = {
-          message: profile.message || s.force_lock_message || defaultMsg,
-          audio:   profile.audio_url || s.force_lock_audio || defaultAudio,
-          image:   profile.icon_url  || s.force_lock_image || defaultImage,
+          message: profile.message ?? s.force_lock_message ?? defaultMsg,
+          audio:   profile.audio_url ?? s.force_lock_audio ?? defaultAudio,
+          image:   profile.icon_url  ?? s.force_lock_image ?? defaultImage,
         };
       }
     }
     return {
       locked: true,
-      message: profileData.message || s.force_lock_message || defaultMsg,
-      audio:   profileData.audio   || s.force_lock_audio   || defaultAudio,
-      image:   profileData.image   || s.force_lock_image   || defaultImage,
+      message: profileData.message ?? s.force_lock_message ?? defaultMsg,
+      audio:   profileData.audio   ?? s.force_lock_audio   ?? defaultAudio,
+      image:   profileData.image   ?? s.force_lock_image   ?? defaultImage,
       profile_id: profileId || null,
     };
   }
@@ -426,18 +444,19 @@ async function getLockProfile(id) {
   return await db.get(`SELECT * FROM force_lock_profiles WHERE id = ?`, [id]);
 }
 
-async function upsertLockProfile(id, name, iconUrl, audioUrl, message) {
+async function upsertLockProfile(id, name, iconUrl, audioUrl, message, durationMinutes) {
   const db = await getDb();
+  const duration = parseInt(durationMinutes) || 0;
   if (id) {
     await db.run(
-      `UPDATE force_lock_profiles SET name=?, icon_url=?, audio_url=?, message=? WHERE id=?`,
-      [name, iconUrl, audioUrl, message, id]
+      `UPDATE force_lock_profiles SET name=?, icon_url=?, audio_url=?, message=?, duration_minutes=? WHERE id=?`,
+      [name, iconUrl, audioUrl, message, duration, id]
     );
     return id;
   } else {
     const res = await db.run(
-      `INSERT INTO force_lock_profiles (name, icon_url, audio_url, message) VALUES (?, ?, ?, ?)`,
-      [name, iconUrl, audioUrl, message]
+      `INSERT INTO force_lock_profiles (name, icon_url, audio_url, message, duration_minutes) VALUES (?, ?, ?, ?, ?)`,
+      [name, iconUrl, audioUrl, message, duration]
     );
     return res.lastID;
   }

@@ -106,9 +106,9 @@ router.get('/admin-api/force-lock-profiles', async (req, res) => {
 });
 
 router.post('/admin-api/force-lock-profiles', async (req, res) => {
-  const { id, name, icon_url, audio_url, message } = req.body || {};
+  const { id, name, icon_url, audio_url, message, duration_minutes } = req.body || {};
   if (!name) return res.status(400).json({ error: 'Name is required' });
-  const newId = await db.upsertLockProfile(id || null, name, icon_url || '', audio_url || '', message || '');
+  const newId = await db.upsertLockProfile(id || null, name, icon_url || '', audio_url || '', message || '', duration_minutes || 0);
   res.json({ success: true, id: newId });
 });
 
@@ -123,12 +123,14 @@ router.post('/admin-api/force-lock-profiles/:id/activate', async (req, res) => {
   if (!profile) return res.status(404).json({ error: 'Profile not found' });
   await db.setSetting('force_lock_profile_id', String(id));
   await db.setSetting('force_sleep', 'true');
+  await db.setSetting('force_lock_activated_at', String(Date.now()));
   res.json({ success: true });
 });
 
 router.post('/admin-api/force-lock-profiles/deactivate', async (req, res) => {
   await db.setSetting('force_sleep', 'false');
   await db.setSetting('force_lock_profile_id', '');
+  await db.setSetting('force_lock_activated_at', '');
   res.json({ success: true });
 });
 

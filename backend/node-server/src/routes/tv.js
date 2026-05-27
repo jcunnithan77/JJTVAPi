@@ -103,9 +103,9 @@ router.get('/api/status', async (req, res) => {
 
     if (sleepStatus && sleepStatus.locked) {
       response.locked = true;
-      response.message = sleepStatus.message || 'Time for bed!';
-      response.audio = sleepStatus.audio || '';
-      response.image = sleepStatus.image || '';
+      response.message = sleepStatus.message ?? 'Time for bed!';
+      response.audio = sleepStatus.audio ?? '';
+      response.image = sleepStatus.image ?? '';
     }
 
     res.json(response);
