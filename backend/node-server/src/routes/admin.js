@@ -449,6 +449,36 @@ router.delete('/admin-api/media/:playlist/:filename(*)', async (req, res) => {
   }
 });
 
+router.get('/admin-api/debug/tv', async (req, res) => {
+  try {
+    const asleep = await db.isSystemAsleep();
+    const displayMode = await db.getPlaylistsForDisplay();
+    const cachedPlaylists = await db.getCachedPlaylists();
+    const liveStreams = await db.getLiveStreams();
+    const allPlaylists = [...cachedPlaylists.map(p => p.name)];
+    if (liveStreams.length > 0) allPlaylists.push('Live');
+    
+    const allowed = {};
+    for (const p of allPlaylists) {
+      allowed[p] = await db.isPlaylistAllowed(p);
+    }
+
+    res.json({
+      asleep,
+      displayMode: {
+        mode: displayMode.mode,
+        playlists: displayMode.playlists,
+        excludeScheduled: displayMode.excludeScheduled ? Array.from(displayMode.excludeScheduled) : []
+      },
+      cachedPlaylists: cachedPlaylists.map(p => p.name),
+      liveStreams: liveStreams.map(l => l.title),
+      allowed
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // Media Manager Controls
 // ─────────────────────────────────────────────────────────────
