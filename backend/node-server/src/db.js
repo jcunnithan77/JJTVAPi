@@ -39,6 +39,7 @@ async function initDb() {
       duration TEXT,
       size_mb REAL,
       vhash TEXT,
+      file_created_at INTEGER DEFAULT 0,
       last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -48,7 +49,9 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN priority INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN min_duration INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN watch_limit INTEGER DEFAULT 3`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN mandatory_view INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE daily_playlist_progress ADD COLUMN watched_duration INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE media_cache ADD COLUMN file_created_at INTEGER DEFAULT 0`); } catch(e) {}
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS force_lock_profiles (
@@ -143,10 +146,13 @@ async function getSchedule(playlist) {
   return await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
-async function upsertSchedule(playlist, startTime, endTime, lockMessage = '', lockAudio = '', priority = 0, minDuration = 0, watchLimit = 3) {
+async function upsertSchedule(playlist, startTime, endTime, lockMessage, lockAudio, priority, minDuration, watchLimit, mandatoryView) {
   const db = await getDb();
-  await db.run(`INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
-    [playlist, startTime, endTime, lockMessage, lockAudio, priority, minDuration, watchLimit]);
+  await db.run(
+    `INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit, mandatory_view) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+    [playlist, startTime, endTime, lockMessage || '', lockAudio || '', priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0]
+  );
 }
 
 async function deleteSchedule(playlist) {
@@ -174,12 +180,12 @@ async function cancelScheduledDownload(id) {
   await db.run(`UPDATE scheduled_downloads SET status = 'cancelled' WHERE id = ? AND status = 'pending'`, [id]);
 }
 
-async function updateMediaCache(vpath, playlist, filename, title, thumbnail, duration, size_mb, vhash) {
+async function updateMediaCache(vpath, playlist, filename, title, thumbnail, duration, size_mb, vhash, fileCreatedAt) {
   const db = await getDb();
   await db.run(`
-    INSERT OR REPLACE INTO media_cache (vpath, playlist, filename, title, thumbnail, duration, size_mb, vhash, last_seen)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `, [vpath, playlist, filename, title, thumbnail, duration, size_mb, vhash]);
+    INSERT OR REPLACE INTO media_cache (vpath, playlist, filename, title, thumbnail, duration, size_mb, vhash, file_created_at, last_seen)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `, [vpath, playlist, filename, title, thumbnail, duration, size_mb, vhash, fileCreatedAt || 0]);
 }
 
 async function getCachedPlaylists() {
@@ -198,7 +204,7 @@ async function getCachedVideos(playlist) {
   return await db.all(`
     SELECT * FROM media_cache 
     WHERE playlist = ? 
-    ORDER BY filename ASC
+    ORDER BY file_created_at ASC, filename ASC
   `, [playlist]);
 }
 

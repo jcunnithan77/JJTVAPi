@@ -197,10 +197,33 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
     const watchLog = await db.getPlaylistWatchLog(playlistId);
     const demotedSet = new Set(watchLog.filter(r => r.demoted === 1).map(r => r.vhash));
 
-    const sorted = [
+    let sorted = [
       ...videos.filter(v => !demotedSet.has(v.vhash)),
       ...videos.filter(v => demotedSet.has(v.vhash)),
     ];
+    
+    // Check if the playlist (or a parent folder schedule) has mandatory view enabled
+    // We check the exact playlist, and if not found, check parent folders in case of nested
+    let isMandatory = false;
+    let parts = playlistId.split('/');
+    for (let i = parts.length; i > 0; i--) {
+      const parentSchedule = await db.getSchedule(parts.slice(0, i).join('/'));
+      if (parentSchedule && parentSchedule.mandatory_view === 1) {
+        isMandatory = true;
+        break;
+      }
+    }
+
+    if (isMandatory) {
+      // Find the first video that is NOT demoted (hasn't hit rotation limit)
+      const nextVideo = sorted.find(v => !demotedSet.has(v.vhash));
+      if (nextVideo) {
+        sorted = [nextVideo];
+      } else if (sorted.length > 0) {
+        // If all are demoted, they finished the whole playlist before reset
+        sorted = [sorted[0]];
+      }
+    }
 
     const videoList = sorted.map(v => {
       // Register in hash map for HLS
@@ -221,7 +244,7 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       };
     });
 
-    res.json({ id: playlistId, name: playlistId, videos: videoList });
+    res.json({ id: playlistId, name: playlistId, videos: videoList, mandatory_view: isMandatory });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

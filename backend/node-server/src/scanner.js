@@ -128,6 +128,7 @@ async function scanFolder(mediaPath, folderName, rootPlaylist = folderName) {
 
       const hash = hashVideoPath(vPath);
       const duration = durationStr || getDuration(vPath);
+      const fileCreatedAt = Math.floor((stats.birthtimeMs || stats.mtimeMs) / 1000);
       
       await db.updateMediaCache(
         vPath,
@@ -137,7 +138,8 @@ async function scanFolder(mediaPath, folderName, rootPlaylist = folderName) {
         thumb,
         duration,
         sizeMb,
-        hash
+        hash,
+        fileCreatedAt
       );
 
     }
