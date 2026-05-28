@@ -63,7 +63,7 @@ function startHlsConversion(videoPath, cacheDir) {
 
     if (ongoingConversions.has(cacheDir)) {
       // Wait for the ongoing conversion to produce the manifest
-      return waitForManifest(manifestPath, 30000).then(resolve).catch(reject);
+      return waitForManifest(manifestPath, 60000).then(resolve).catch(reject);
     }
 
     fs.mkdirSync(cacheDir, { recursive: true });
@@ -105,7 +105,7 @@ function startHlsConversion(videoPath, cacheDir) {
     });
 
     // Don't wait for full conversion — resolve as soon as first segment appears
-    waitForManifest(manifestPath, 15000).then(resolve).catch(reject);
+    waitForManifest(manifestPath, 60000).then(resolve).catch(reject);
   });
 }
 
