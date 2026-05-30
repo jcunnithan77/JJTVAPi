@@ -202,15 +202,24 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       ...videos.filter(v => demotedSet.has(v.vhash)),
     ];
     
-    // Check if the playlist (or a parent folder schedule) has mandatory view enabled
-    // We check the exact playlist, and if not found, check parent folders in case of nested
     let isMandatory = false;
+    let minDuration = 0;
     let parts = playlistId.split('/');
     for (let i = parts.length; i > 0; i--) {
       const parentSchedule = await db.getSchedule(parts.slice(0, i).join('/'));
-      if (parentSchedule && parentSchedule.mandatory_view === 1) {
-        isMandatory = true;
+      if (parentSchedule) {
+        if (parentSchedule.mandatory_view === 1) isMandatory = true;
+        if (parentSchedule.min_duration > 0) minDuration = parentSchedule.min_duration;
         break;
+      }
+    }
+
+    let remainingTimeMsg = '';
+    if (minDuration > 0) {
+      const watchedSecs = await db.getPlaylistProgress(playlistId);
+      const remainingSecs = (minDuration * 60) - watchedSecs;
+      if (remainingSecs > 0) {
+        remainingTimeMsg = `Mandatory: ${Math.ceil(remainingSecs / 60)} minutes remaining`;
       }
     }
 
@@ -244,7 +253,7 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       };
     });
 
-    res.json({ id: playlistId, name: playlistId, videos: videoList, mandatory_view: isMandatory });
+    res.json({ id: playlistId, name: playlistId, videos: videoList, mandatory_view: isMandatory, notification: remainingTimeMsg });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

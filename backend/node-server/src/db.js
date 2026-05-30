@@ -382,12 +382,16 @@ async function getPlaylistsForDisplay() {
 
     if (s.start_time && s.start_time !== '' && s.end_time && s.end_time !== '') {
       isTimed = true;
-      strictTimedNames.add(s.playlist);
       const startM = _parseMins(s.start_time);
       const endM   = _parseMins(s.end_time);
       inWindow = startM < endM
         ? (nowM >= startM && nowM <= endM)
         : (nowM >= startM || nowM <= endM);
+      
+      // Only hide the playlist in fallback mode if we are OUTSIDE its allowed window
+      if (!inWindow) {
+        strictTimedNames.add(s.playlist);
+      }
     } else {
       // No time defined, always active
       inWindow = true; 
@@ -580,6 +584,13 @@ async function clearDailyProgress() {
   console.log('[DB] Cleared daily_playlist_progress for', today);
 }
 
+async function getPlaylistProgress(playlist) {
+  const db = await getDb();
+  const today = new Date().toISOString().slice(0, 10);
+  const row = await db.get(`SELECT watched_duration FROM daily_playlist_progress WHERE playlist = ? AND date = ?`, [playlist, today]);
+  return row ? row.watched_duration : 0;
+}
+
 module.exports = {
   initDb, getSettings, setSetting, getOverlay, setOverlay,
   getSchedules, getSchedule, upsertSchedule, deleteSchedule,
@@ -589,7 +600,7 @@ module.exports = {
   isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay,
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
   recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted,
-  clearDailyProgress,
+  clearDailyProgress, getPlaylistProgress,
   getLiveStreams, addLiveStream, deleteLiveStream
 };
 
