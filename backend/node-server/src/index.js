@@ -45,8 +45,16 @@ if (fs.existsSync(CONFIG_FILE)) {
   }
 }
 
-if (!fs.existsSync(MEDIA_PATH)) {
-  fs.mkdirSync(MEDIA_PATH, { recursive: true });
+try {
+  if (!fs.existsSync(MEDIA_PATH)) {
+    fs.mkdirSync(MEDIA_PATH, { recursive: true });
+  }
+} catch (e) {
+  console.error(`[Config] Failed to create MEDIA_PATH ${MEDIA_PATH}. Falling back to default. Error: ${e.message}`);
+  MEDIA_PATH = path.join(__dirname, '..', '..', 'videos');
+  if (!fs.existsSync(MEDIA_PATH)) {
+    fs.mkdirSync(MEDIA_PATH, { recursive: true });
+  }
 }
 
 console.log(`[Config] Media Path: ${path.resolve(MEDIA_PATH)}`);

@@ -1,94 +1,12 @@
-[10:42:40 AM] [Config] Media Path: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[10:42:40 AM] [DB] Initialized.
-[10:42:40 AM] [Scheduler] Started — checking every minute for scheduled downloads.
-[10:42:40 AM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[11:11:16 AM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[11:11:16 AM] [Scanner] Full scan complete.
-[11:41:16 AM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[11:41:16 AM] [Scanner] Full scan complete.
-[12:11:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[12:11:16 PM] [Scanner] Full scan complete.
-[12:41:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[12:41:16 PM] [Scanner] Full scan complete.
-[1:11:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[1:11:16 PM] [Scanner] Full scan complete.
-[1:22:29 PM] [TV-API] GET /api/playlists from 127.0.0.1
-[1:24:30 PM] [TV-API] GET /api/playlists from 127.0.0.1
-[1:41:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[1:41:16 PM] [Scanner] Full scan complete.
-[2:11:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[2:11:16 PM] [Scanner] Full scan complete.
-[2:41:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[2:41:16 PM] [Scanner] Full scan complete.
-[3:11:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[3:11:16 PM] [Scanner] Full scan complete.
-[3:41:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[3:41:16 PM] [Scanner] Full scan complete.
-[4:11:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[4:11:16 PM] [Scanner] Full scan complete.
-[6:30:35 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[6:30:35 PM] [Scanner] Full scan complete.
-[7:00:35 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[7:00:35 PM] [Scanner] Full scan complete.
-[7:30:35 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[7:30:35 PM] [Scanner] Full scan complete.
-[9:58:37 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[9:58:37 PM] [Scanner] Full scan complete.
-[1:01:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[1:01:07 PM] [Scanner] Full scan complete.
-[1:31:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[1:31:07 PM] [Scanner] Full scan complete.
-[2:01:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[2:01:07 PM] [Scanner] Full scan complete.
-[2:31:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[2:31:07 PM] [Scanner] Full scan complete.
-[3:01:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[3:01:07 PM] [Scanner] Full scan complete.
-[3:31:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[3:31:07 PM] [Scanner] Full scan complete.
-[4:01:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[4:01:07 PM] [Scanner] Full scan complete.
-[4:31:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[4:31:07 PM] [Scanner] Full scan complete.
-[1:46:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[1:46:07 PM] [Scanner] Full scan complete.
-[2:16:07 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[2:16:07 PM] [Scanner] Full scan complete.
-[2:46:08 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[2:46:08 PM] [Scanner] Full scan complete.
-[3:16:08 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[3:16:08 PM] [Scanner] Full scan complete.
-[3:46:08 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[3:46:08 PM] [Scanner] Full scan complete.
-[4:16:08 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[4:16:08 PM] [Scanner] Full scan complete.
-[4:46:08 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[4:46:08 PM] [Scanner] Full scan complete.
-[5:16:08 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[5:16:08 PM] [Scanner] Full scan complete.
-[5:46:08 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[5:46:08 PM] [Scanner] Full scan complete.
-[8:19:25 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[8:19:25 PM] [Scanner] Full scan complete.
-[9:12:25 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[9:12:25 PM] [Scanner] Full scan complete.
-[9:42:25 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[9:42:25 PM] [Scanner] Full scan complete.
-[10:12:25 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[10:12:25 PM] [Scanner] Full scan complete.
-[10:42:25 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[10:42:25 PM] [Scanner] Full scan complete.
-[12:41:48 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[12:41:48 PM] [Scanner] Full scan complete.
-[1:11:48 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[1:11:48 PM] [Scanner] Full scan complete.
-[1:59:04 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[1:59:05 PM] [Scanner] Full scan complete.
-[2:48:34 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[2:48:37 PM] [Scanner] Full scan complete.
-[3:48:58 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[3:48:58 PM] [Scanner] Full scan complete.
-[3:03:41 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[3:03:43 PM] [Scanner] Full scan complete.
-[3:33:41 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[3:33:41 PM] [Scanner] Full scan complete.
+[3:44:25 PM] ERROR: [Config] Failed to create MEDIA_PATH E:/Blippi/downloads. Falling back to default. Error: ENOENT: no such file or directory, mkdir 'E:\Blippi\downloads'
+[3:44:25 PM] [Config] Media Path: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
+[3:44:26 PM] [DB] Initialized.
+[3:44:26 PM] [Scheduler] Started — checking every minute for scheduled downloads.
+[3:44:26 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
+[3:44:26 PM] 
+🚀 JJtv Server (Node.js) is running on:
+[3:44:26 PM]    - Local:  http://localhost:5000
+[3:44:26 PM]    - Network: http://0.0.0.0:5000
+
+[3:44:26 PM] Press Ctrl+C to stop.
+[3:44:26 PM] [Scanner] Full scan complete.

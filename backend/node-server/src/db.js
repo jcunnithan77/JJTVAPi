@@ -50,6 +50,7 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN min_duration INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN watch_limit INTEGER DEFAULT 3`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN mandatory_view INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN is_blocked INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE daily_playlist_progress ADD COLUMN watched_duration INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE media_cache ADD COLUMN file_created_at INTEGER DEFAULT 0`); } catch(e) {}
 
@@ -146,12 +147,12 @@ async function getSchedule(playlist) {
   return await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
-async function upsertSchedule(playlist, startTime, endTime, lockMessage, lockAudio, priority, minDuration, watchLimit, mandatoryView) {
+async function upsertSchedule(playlist, startTime, endTime, lockMessage, lockAudio, priority, minDuration, watchLimit, mandatoryView, isBlocked) {
   const db = await getDb();
   await db.run(
-    `INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit, mandatory_view) 
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-    [playlist, startTime, endTime, lockMessage || '', lockAudio || '', priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0]
+    `INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit, mandatory_view, is_blocked) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+    [playlist, startTime, endTime, lockMessage || '', lockAudio || '', priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0, isBlocked || 0]
   );
 }
 
@@ -363,17 +364,19 @@ async function getPlaylistsForDisplay() {
   const today = now.toISOString().slice(0, 10);
   const nowM = now.getHours() * 60 + now.getMinutes();
 
+  const schedules = await db.all(
+    `SELECT * FROM schedules ORDER BY priority DESC`
+  );
+
+  const blockedNames = schedules.filter(s => s.is_blocked === 1).map(s => s.playlist);
+
   const settings = await getSettings();
   if (settings.mandatory_override_until) {
     const overrideUntil = parseInt(settings.mandatory_override_until);
     if (!isNaN(overrideUntil) && Date.now() < overrideUntil) {
-      return { mode: 'all' }; // Bypass all schedules and mandatory views
+      return { mode: 'all', blocked: blockedNames }; // Bypass all schedules, but respect blocks
     }
   }
-
-  const schedules = await db.all(
-    `SELECT * FROM schedules ORDER BY priority DESC`
-  );
 
   const activeTimed = [];
   const activeTimeless = [];
@@ -382,6 +385,8 @@ async function getPlaylistsForDisplay() {
   const minDurationMap = {};
 
   for (const s of schedules) {
+    if (s.is_blocked === 1) continue; // Skip entirely for normal scheduling
+    
     scheduledNames.add(s.playlist);
     minDurationMap[s.playlist] = s.min_duration || 0;
     
@@ -417,7 +422,7 @@ async function getPlaylistsForDisplay() {
   const allActive = [...activeTimed, ...activeTimeless];
   
   if (allActive.length === 0) {
-    return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames };
+    return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames, blocked: blockedNames };
   }
 
   const placeholders = allActive.map(() => '?').join(',');
@@ -428,16 +433,11 @@ async function getPlaylistsForDisplay() {
   
   const completedSet = new Set();
   for (const row of completionRows) {
-    const minDurMins = minDurationMap[row.playlist] || 0;
+    const minDur = minDurationMap[row.playlist];
     if (row.completed === 1) {
       completedSet.add(row.playlist);
-    } else if (minDurMins > 0 && row.watched_duration >= minDurMins * 60) {
+    } else if (minDur > 0 && row.watched_duration >= minDur * 60) {
       completedSet.add(row.playlist);
-      // Mark as completed in DB
-      await db.run(
-        `UPDATE daily_playlist_progress SET completed = 1 WHERE playlist = ? AND date = ?`,
-        [row.playlist, today]
-      );
     }
   }
 
@@ -446,20 +446,25 @@ async function getPlaylistsForDisplay() {
 
   // 1. If any timed schedule is active, ONLY that playlist should show
   if (pendingTimed.length > 0) {
-    return { mode: 'priority', playlists: [pendingTimed[0]] };
+    return { mode: 'priority', playlists: [pendingTimed[0]], blocked: blockedNames };
   }
   
   // 2. Otherwise, if there is a timeless schedule, it should show
   if (pendingTimeless.length > 0) {
-    return { mode: 'priority', playlists: [pendingTimeless[0]] };
+    return { mode: 'priority', playlists: [pendingTimeless[0]], blocked: blockedNames };
   }
 
   // 3. Fallback to unscheduled
-  return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames };
+  return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames, blocked: blockedNames };
 }
 
 async function isPlaylistAllowed(name) {
   const result = await getPlaylistsForDisplay();
+  
+  if (result.blocked && result.blocked.some(b => name === b || name.startsWith(b + '/'))) {
+    return false;
+  }
+
   if (result.mode === 'all') return true;
   if (result.mode === 'priority') {
     return result.playlists.some(p => name === p || name.startsWith(p + '/'));
