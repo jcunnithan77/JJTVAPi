@@ -215,11 +215,14 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
     }
 
     let remainingTimeMsg = '';
+    let remainingSecsInt = 0;
     if (minDuration > 0) {
       const watchedSecs = await db.getPlaylistProgress(playlistId);
-      const remainingSecs = (minDuration * 60) - watchedSecs;
-      if (remainingSecs > 0) {
-        remainingTimeMsg = `Mandatory: ${Math.ceil(remainingSecs / 60)} minutes remaining`;
+      remainingSecsInt = (minDuration * 60) - watchedSecs;
+      if (remainingSecsInt > 0) {
+        remainingTimeMsg = `Mandatory: ${Math.ceil(remainingSecsInt / 60)} minutes remaining`;
+      } else {
+        remainingSecsInt = 0;
       }
     }
 
@@ -253,7 +256,27 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       };
     });
 
-    res.json({ id: playlistId, name: playlistId, videos: videoList, mandatory_view: isMandatory, notification: remainingTimeMsg });
+    res.json({ 
+      id: playlistId, 
+      name: playlistId, 
+      videos: videoList, 
+      mandatory_view: isMandatory, 
+      notification: remainingTimeMsg,
+      remaining_mandatory_seconds: remainingSecsInt
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/api/video/progress', async (req, res) => {
+  const { playlist, watched_seconds } = req.body || {};
+  if (!playlist || typeof watched_seconds !== 'number') {
+    return res.status(400).json({ error: 'Missing params' });
+  }
+  try {
+    await db.addPlaylistProgress(playlist, watched_seconds);
+    res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

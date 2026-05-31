@@ -363,6 +363,14 @@ async function getPlaylistsForDisplay() {
   const today = now.toISOString().slice(0, 10);
   const nowM = now.getHours() * 60 + now.getMinutes();
 
+  const settings = await getSettings();
+  if (settings.mandatory_override_until) {
+    const overrideUntil = parseInt(settings.mandatory_override_until);
+    if (!isNaN(overrideUntil) && Date.now() < overrideUntil) {
+      return { mode: 'all' }; // Bypass all schedules and mandatory views
+    }
+  }
+
   const schedules = await db.all(
     `SELECT * FROM schedules ORDER BY priority DESC`
   );
@@ -528,23 +536,19 @@ async function recordVideoWatch(vhash, playlist) {
       last_watched = CURRENT_TIMESTAMP
   `, [vhash, playlist]);
   const row = await db.get(`SELECT watch_count FROM video_watch_log WHERE vhash=? AND playlist=?`, [vhash, playlist]);
-
-  // Update daily watched duration
-  const video = await db.get(`SELECT duration FROM media_cache WHERE vhash = ?`, [vhash]);
-  if (video && video.duration) {
-    const seconds = parseDurationToSeconds(video.duration);
-    if (seconds > 0) {
-      const today = new Date().toISOString().slice(0, 10);
-      await db.run(`
-        INSERT INTO daily_playlist_progress (playlist, date, completed, watched_duration)
-        VALUES (?, ?, 0, ?)
-        ON CONFLICT(playlist, date) DO UPDATE SET
-          watched_duration = watched_duration + ?
-      `, [playlist, today, seconds, seconds]);
-    }
-  }
-
   return row ? row.watch_count : 1;
+}
+
+async function addPlaylistProgress(playlist, seconds) {
+  if (seconds <= 0) return;
+  const db = await getDb();
+  const today = new Date().toISOString().slice(0, 10);
+  await db.run(`
+    INSERT INTO daily_playlist_progress (playlist, date, completed, watched_duration)
+    VALUES (?, ?, 0, ?)
+    ON CONFLICT(playlist, date) DO UPDATE SET
+      watched_duration = watched_duration + ?
+  `, [playlist, today, seconds, seconds]);
 }
 
 async function demoteVideo(vhash, playlist) {
@@ -600,7 +604,7 @@ module.exports = {
   isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay,
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
   recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted,
-  clearDailyProgress, getPlaylistProgress,
+  clearDailyProgress, getPlaylistProgress, addPlaylistProgress,
   getLiveStreams, addLiveStream, deleteLiveStream
 };
 

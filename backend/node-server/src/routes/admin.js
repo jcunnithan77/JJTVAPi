@@ -39,6 +39,17 @@ router.post('/admin-api/settings', async (req, res) => {
   res.json(await db.getSettings());
 });
 
+router.post('/admin-api/override', async (req, res) => {
+  const { minutes } = req.body || {};
+  if (minutes > 0) {
+    const overrideUntil = Date.now() + (minutes * 60 * 1000);
+    await db.setSetting('mandatory_override_until', overrideUntil.toString());
+  } else {
+    await db.setSetting('mandatory_override_until', '');
+  }
+  res.json({ success: true });
+});
+
 router.get('/admin-api/schedules', async (req, res) => {
   const scheduleMap = {};
   const schedules = await db.getSchedules();
