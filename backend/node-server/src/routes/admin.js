@@ -63,7 +63,10 @@ router.get('/admin-api/schedules', async (req, res) => {
       min_duration: row.min_duration || 0,
       watch_limit: row.watch_limit !== undefined ? row.watch_limit : 3,
       mandatory_view: row.mandatory_view || 0,
-      is_blocked: row.is_blocked || 0
+      is_blocked: row.is_blocked || 0,
+      req_ack: row.req_ack || 0,
+      min_repeat: row.min_repeat || 1,
+      max_repeat: row.max_repeat !== undefined ? row.max_repeat : 3
     };
   }
   
@@ -72,7 +75,7 @@ router.get('/admin-api/schedules', async (req, res) => {
     const cached = await db.getCachedPlaylists();
     for (const p of cached) {
       if (!scheduleMap[p.name]) {
-        scheduleMap[p.name] = { start_time: '', end_time: '', lock_message: '', lock_audio: '', priority: 0, min_duration: 0, watch_limit: 3, mandatory_view: 0, is_blocked: 0 };
+        scheduleMap[p.name] = { start_time: '', end_time: '', lock_message: '', lock_audio: '', priority: 0, min_duration: 0, watch_limit: 3, mandatory_view: 0, is_blocked: 0, req_ack: 0, min_repeat: 1, max_repeat: 3 };
       }
     }
   } catch { /* ignore */ }
@@ -81,7 +84,7 @@ router.get('/admin-api/schedules', async (req, res) => {
 });
 
 router.post('/admin-api/schedules', async (req, res) => {
-  const { playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit, mandatory_view, is_blocked } = req.body || {};
+  const { playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat } = req.body || {};
   await db.upsertSchedule(
     playlist, 
     start_time || '', 
@@ -92,8 +95,18 @@ router.post('/admin-api/schedules', async (req, res) => {
     parseInt(min_duration || 0),
     parseInt(watch_limit !== undefined ? watch_limit : 3),
     parseInt(mandatory_view ? 1 : 0),
-    parseInt(is_blocked ? 1 : 0)
+    parseInt(is_blocked ? 1 : 0),
+    parseInt(req_ack ? 1 : 0),
+    parseInt(min_repeat || 1),
+    parseInt(max_repeat !== undefined ? max_repeat : 3)
   );
+  res.json({ success: true });
+});
+
+router.post('/admin-api/acknowledge', async (req, res) => {
+  const { playlist } = req.body || {};
+  if (!playlist) return res.status(400).json({ error: 'Playlist name is required' });
+  await db.setPlaylistAcknowledgement(playlist, true);
   res.json({ success: true });
 });
 

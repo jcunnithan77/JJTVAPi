@@ -51,6 +51,9 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN watch_limit INTEGER DEFAULT 3`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN mandatory_view INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN is_blocked INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN req_ack INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN min_repeat INTEGER DEFAULT 1`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN max_repeat INTEGER DEFAULT 3`); } catch(e) {}
   try { await db.exec(`ALTER TABLE daily_playlist_progress ADD COLUMN watched_duration INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE media_cache ADD COLUMN file_created_at INTEGER DEFAULT 0`); } catch(e) {}
 
@@ -69,6 +72,11 @@ async function initDb() {
       title TEXT NOT NULL,
       url TEXT NOT NULL,
       thumbnail TEXT DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS active_acknowledgements (
+      playlist TEXT PRIMARY KEY,
+      acknowledged INTEGER DEFAULT 0,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS daily_playlist_progress (
       playlist TEXT NOT NULL, 
@@ -147,12 +155,12 @@ async function getSchedule(playlist) {
   return await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
-async function upsertSchedule(playlist, startTime, endTime, lockMessage, lockAudio, priority, minDuration, watchLimit, mandatoryView, isBlocked) {
+async function upsertSchedule(playlist, startTime, endTime, lockMessage, lockAudio, priority, minDuration, watchLimit, mandatoryView, isBlocked, reqAck, minRepeat, maxRepeat) {
   const db = await getDb();
   await db.run(
-    `INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit, mandatory_view, is_blocked) 
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-    [playlist, startTime, endTime, lockMessage || '', lockAudio || '', priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0, isBlocked || 0]
+    `INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+    [playlist, startTime, endTime, lockMessage || '', lockAudio || '', priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0, isBlocked || 0, reqAck || 0, minRepeat || 1, maxRepeat || 3]
   );
 }
 
@@ -600,6 +608,21 @@ async function getPlaylistProgress(playlist) {
   return row ? row.watched_duration : 0;
 }
 
+// --- Acknowledgements ---
+async function setPlaylistAcknowledgement(playlist, acknowledged) {
+  const db = await getDb();
+  await db.run(`
+    INSERT OR REPLACE INTO active_acknowledgements (playlist, acknowledged, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+  `, [playlist, acknowledged ? 1 : 0]);
+}
+
+async function isPlaylistAcknowledged(playlist) {
+  const db = await getDb();
+  const row = await db.get(`SELECT acknowledged FROM active_acknowledgements WHERE playlist = ?`, [playlist]);
+  return row ? row.acknowledged === 1 : false;
+}
+
 module.exports = {
   initDb, getSettings, setSetting, getOverlay, setOverlay,
   getSchedules, getSchedule, upsertSchedule, deleteSchedule,
@@ -610,7 +633,8 @@ module.exports = {
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
   recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted,
   clearDailyProgress, getPlaylistProgress, addPlaylistProgress,
-  getLiveStreams, addLiveStream, deleteLiveStream
+  getLiveStreams, addLiveStream, deleteLiveStream,
+  setPlaylistAcknowledgement, isPlaylistAcknowledged
 };
 
 // --- Live Streams ---

@@ -204,15 +204,23 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
     
     let isMandatory = false;
     let minDuration = 0;
+    let reqAck = false;
+    let minRepeat = 1;
+    let maxRepeat = 3;
     let parts = playlistId.split('/');
     for (let i = parts.length; i > 0; i--) {
       const parentSchedule = await db.getSchedule(parts.slice(0, i).join('/'));
       if (parentSchedule) {
         if (parentSchedule.mandatory_view === 1) isMandatory = true;
         if (parentSchedule.min_duration > 0) minDuration = parentSchedule.min_duration;
+        if (parentSchedule.req_ack === 1) reqAck = true;
+        if (parentSchedule.min_repeat !== undefined) minRepeat = parentSchedule.min_repeat;
+        if (parentSchedule.max_repeat !== undefined) maxRepeat = parentSchedule.max_repeat;
         break;
       }
     }
+
+    const isAcknowledged = await db.isPlaylistAcknowledged(playlistId);
 
     let remainingTimeMsg = '';
     let remainingSecsInt = 0;
@@ -262,8 +270,22 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       videos: videoList, 
       mandatory_view: isMandatory, 
       notification: remainingTimeMsg,
-      remaining_mandatory_seconds: remainingSecsInt
+      remaining_mandatory_seconds: remainingSecsInt,
+      req_ack: reqAck,
+      min_repeat: minRepeat,
+      max_repeat: maxRepeat,
+      acknowledged: isAcknowledged
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/api/playlists/:id(*)/ack_status', async (req, res) => {
+  const playlistId = req.params.id;
+  try {
+    const isAcknowledged = await db.isPlaylistAcknowledged(playlistId);
+    res.json({ acknowledged: isAcknowledged });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
