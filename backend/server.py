@@ -75,6 +75,11 @@ def init_db():
         ('priority',     'INTEGER DEFAULT 0'),
         ('min_duration', 'INTEGER DEFAULT 0'),
         ('watch_limit',  'INTEGER DEFAULT 3'),
+        ('mandatory_view', 'INTEGER DEFAULT 0'),
+        ('is_blocked',   'INTEGER DEFAULT 0'),
+        ('req_ack',      'INTEGER DEFAULT 0'),
+        ('min_repeat',   'INTEGER DEFAULT 1'),
+        ('max_repeat',   'INTEGER DEFAULT 3'),
     ]:
         try:
             c.execute(f'ALTER TABLE schedules ADD COLUMN {col} {col_def}')
@@ -507,6 +512,13 @@ def list_playlists():
         return jsonify([])
 
     playlists = []
+    conn = get_db_connection()
+    try:
+        schedules = {row['playlist']: dict(row) for row in conn.execute("SELECT * FROM schedules").fetchall()}
+    except Exception:
+        schedules = {}
+    conn.close()
+
     try:
         items = os.listdir(MEDIA_PATH)
         for item in items:
@@ -516,11 +528,15 @@ def list_playlists():
                     videos = get_video_files(item_path)
                     if videos:
                         thumb = get_thumbnail(item_path)
+                        s = schedules.get(item, {})
                         playlists.append({
                             'id': item,
                             'name': item,
                             'count': len(videos),
-                            'thumbnail': f'/images/{urllib.parse.quote(item)}/{urllib.parse.quote(thumb)}' if thumb else None
+                            'thumbnail': f'/images/{urllib.parse.quote(item)}/{urllib.parse.quote(thumb)}' if thumb else None,
+                            'mandatory_view': s.get('mandatory_view', 0),
+                            'min_repeat': s.get('min_repeat', 1),
+                            'max_repeat': s.get('max_repeat', 3)
                         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -535,6 +551,13 @@ def get_playlist(playlist_id):
     playlist_path = os.path.join(MEDIA_PATH, playlist_id)
     if not os.path.isdir(playlist_path):
         return jsonify({'error': 'Playlist not found'}), 404
+
+    conn = get_db_connection()
+    try:
+        s = dict(conn.execute("SELECT * FROM schedules WHERE playlist=?", (playlist_id,)).fetchone() or {})
+    except Exception:
+        s = {}
+    conn.close()
 
     videos = get_video_files(playlist_path)
     video_list = []
@@ -557,7 +580,14 @@ def get_playlist(playlist_id):
             'playlist': playlist_id,
             'demoted': False
         })
-    return jsonify({'id': playlist_id, 'name': playlist_id, 'videos': video_list})
+    return jsonify({
+        'id': playlist_id, 
+        'name': playlist_id, 
+        'videos': video_list,
+        'mandatory_view': s.get('mandatory_view', 0),
+        'min_repeat': s.get('min_repeat', 1),
+        'max_repeat': s.get('max_repeat', 3)
+    })
 
 
 @app.route('/images/<playlist_id>/<filename>', methods=['GET'])
