@@ -11,7 +11,7 @@ const fs = require('fs');
 const mime = require('mime-types');
 const os = require('os');
 const db = require('../db');
-const { registerVideo, getOrCreateHls, HLS_CACHE_PATH, getVideoPath } = require('../hls');
+const { registerVideo, getOrCreateHls, HLS_CACHE_PATH, getVideoPath, touchStream } = require('../hls');
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm']);
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.JPG', '.PNG', '.JPEG', '.WEBP'];
@@ -514,13 +514,14 @@ router.get('/hls/stream/:hash/index.m3u8', async (req, res) => {
 
 router.get('/hls/stream/:hash/:segment', (req, res) => {
   const { hash, segment } = req.params;
-  
-  // Log the chunk request to the backend console
-  console.log(`[TV-API] GET HLS Chunk: ${segment} (hash: ${hash}) from ${req.ip}`);
 
   if (!segment.endsWith('.ts')) return res.status(400).send('Invalid segment');
   const segPath = path.join(HLS_CACHE_PATH, hash, segment);
   if (!fs.existsSync(segPath)) return res.status(404).send('Segment not found');
+
+  // Mark this stream as actively being watched — prevents cache cleanup mid-play
+  touchStream(hash);
+
   res.setHeader('Content-Type', 'video/mp2t');
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.sendFile(segPath);

@@ -18,7 +18,7 @@ const os = require('os');
 const FFMPEG_PATH = process.env.FFMPEG_BIN || (os.platform() === 'win32' ? path.join(__dirname, '..', '..', 'ffmpeg.exe') : 'ffmpeg');
 const FFPROBE_PATH = process.env.FFPROBE_BIN || (os.platform() === 'win32' ? path.join(__dirname, '..', '..', 'ffprobe.exe') : 'ffprobe');
 const HLS_CACHE_PATH = process.env.HLS_CACHE_PATH || path.join(__dirname, '..', 'hls_cache');
-const HLS_SEGMENT_DURATION = 6; // seconds per segment (YouTube uses 2-5s, Netflix 4s, we use 6s for stability)
+const HLS_SEGMENT_DURATION = 6; // seconds per segment
 
 // In-memory map: videoHash -> absoluteVideoPath
 const videoHashMap = new Map();
@@ -26,8 +26,14 @@ const videoHashMap = new Map();
 // Track ongoing conversions to avoid starting duplicates
 const ongoingConversions = new Set();
 
-// Auto-cleanup: delete HLS cache entries older than 2 hours to prevent disk full
-const CACHE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+// Track active streams: hash -> last access time (ms)
+// Any hash accessed in last 30 minutes is "active" and won't be cleaned up
+const activeStreams = new Map();
+
+// Cleanup: delete HLS cache entries not accessed for 4 hours AND not currently active
+const CACHE_MAX_AGE_MS = 4 * 60 * 60 * 1000;
+// Consider a stream "active" if accessed in the last 45 minutes
+const ACTIVE_WINDOW_MS = 45 * 60 * 1000;
 
 if (!fs.existsSync(HLS_CACHE_PATH)) {
   fs.mkdirSync(HLS_CACHE_PATH, { recursive: true });
@@ -50,6 +56,13 @@ function registerVideo(videoPath) {
 }
 
 /**
+ * Mark a hash as actively streaming (called each time a segment is served).
+ */
+function touchStream(hash) {
+  activeStreams.set(hash, Date.now());
+}
+
+/**
  * Start FFmpeg HLS segmentation for a video.
  * Returns a Promise that resolves when index.m3u8 is ready.
  */
@@ -57,7 +70,8 @@ function startHlsConversion(videoPath, cacheDir) {
   return new Promise((resolve, reject) => {
     const manifestPath = path.join(cacheDir, 'index.m3u8');
 
-    if (fs.existsSync(manifestPath)) {
+    // If manifest already exists and conversion is not ongoing, resolve immediately
+    if (fs.existsSync(manifestPath) && !ongoingConversions.has(cacheDir)) {
       return resolve(true);
     }
 
@@ -71,36 +85,66 @@ function startHlsConversion(videoPath, cacheDir) {
 
     const args = [
       '-i', videoPath,
-      '-c:v', 'libx264',       // Transcode to H.264 for universal compatibility
-      '-preset', 'ultrafast',  // Minimum latency for starting playback
-      '-crf', '23',            // Good balance of quality and file size
-      '-c:a', 'aac',           // Re-encode audio to AAC
+      '-c:v', 'copy',          // Copy video stream (no re-encode) — much faster, no mid-play breaks
+      '-c:a', 'aac',           // Re-encode audio to AAC for compatibility
       '-b:a', '128k',
       '-start_number', '0',
       '-hls_time', String(HLS_SEGMENT_DURATION),
       '-hls_list_size', '0',   // Keep all segments (VOD mode)
-      '-hls_flags', 'independent_segments',
+      '-hls_flags', 'independent_segments+append_list',
       '-hls_segment_type', 'mpegts',
-      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', // Ensure even dimensions for H.264
       '-f', 'hls',
       manifestPath,
     ];
 
+    // Fallback args for videos that need re-encoding (e.g. h.265/hevc)
+    const argsTranscode = [
+      '-i', videoPath,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '23',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-start_number', '0',
+      '-hls_time', String(HLS_SEGMENT_DURATION),
+      '-hls_list_size', '0',
+      '-hls_flags', 'independent_segments+append_list',
+      '-hls_segment_type', 'mpegts',
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+      '-f', 'hls',
+      manifestPath,
+    ];
 
     console.log(`[HLS] Starting conversion: ${path.basename(videoPath)}`);
-    const ffmpeg = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let ffmpeg = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
     let stderr = '';
     ffmpeg.stderr.on('data', d => { stderr += d.toString(); });
 
     ffmpeg.on('close', code => {
-      ongoingConversions.delete(cacheDir);
-      if (code === 0) {
-        console.log(`[HLS] Conversion complete: ${path.basename(videoPath)}`);
-        resolve(true);
+      if (code !== 0) {
+        // Copy mode failed — retry with full transcode (handles h.265, weird codecs, etc.)
+        console.warn(`[HLS] Copy mode failed (${code}) for ${path.basename(videoPath)}, retrying with transcode...`);
+        stderr = '';
+        // Clean up any partial output
+        try {
+          const files = fs.readdirSync(cacheDir);
+          for (const f of files) fs.unlinkSync(path.join(cacheDir, f));
+        } catch { /* ignore */ }
+
+        ffmpeg = spawn(FFMPEG_PATH, argsTranscode, { stdio: ['ignore', 'ignore', 'pipe'] });
+        ffmpeg.stderr.on('data', d => { stderr += d.toString(); });
+        ffmpeg.on('close', code2 => {
+          ongoingConversions.delete(cacheDir);
+          if (code2 === 0) {
+            console.log(`[HLS] Transcode complete: ${path.basename(videoPath)}`);
+          } else {
+            console.error(`[HLS] FFmpeg transcode error (${code2}) for ${videoPath}: ${stderr.slice(-500)}`);
+          }
+        });
       } else {
-        console.error(`[HLS] FFmpeg error (${code}) for file ${videoPath}: ${stderr.slice(-500)}`);
-        reject(new Error(`FFmpeg exited with code ${code}`));
+        ongoingConversions.delete(cacheDir);
+        console.log(`[HLS] Conversion complete: ${path.basename(videoPath)}`);
       }
     });
 
@@ -138,6 +182,9 @@ async function getOrCreateHls(videoHash) {
   const videoPath = videoHashMap.get(videoHash);
   if (!videoPath) return null;
 
+  // Mark as actively streaming
+  touchStream(videoHash);
+
   const cacheDir = path.join(HLS_CACHE_PATH, videoHash);
   await startHlsConversion(videoPath, cacheDir);
   return cacheDir;
@@ -145,7 +192,7 @@ async function getOrCreateHls(videoHash) {
 
 /**
  * Cleanup old HLS cache entries to prevent disk exhaustion.
- * Deletes any cache directory not accessed in CACHE_MAX_AGE_MS.
+ * SAFE: Never deletes cache for streams accessed in the last 45 minutes.
  */
 function cleanupOldCache() {
   try {
@@ -156,8 +203,30 @@ function cleanupOldCache() {
       const dir = path.join(HLS_CACHE_PATH, entry);
       try {
         const stat = fs.statSync(dir);
-        if (stat.isDirectory() && (now - stat.mtimeMs) > CACHE_MAX_AGE_MS) {
+        if (!stat.isDirectory()) continue;
+
+        // NEVER delete if actively streaming
+        const lastAccess = activeStreams.get(entry) || 0;
+        if ((now - lastAccess) < ACTIVE_WINDOW_MS) {
+          continue; // Skip — this stream was recently accessed
+        }
+
+        // Also skip if still being converted
+        if (ongoingConversions.has(dir)) continue;
+
+        // Delete if older than max age (use atime of newest segment file)
+        let newestFileTime = stat.mtimeMs;
+        try {
+          const files = fs.readdirSync(dir);
+          for (const f of files) {
+            const fstat = fs.statSync(path.join(dir, f));
+            if (fstat.mtimeMs > newestFileTime) newestFileTime = fstat.mtimeMs;
+          }
+        } catch { /* ignore */ }
+
+        if ((now - newestFileTime) > CACHE_MAX_AGE_MS) {
           fs.rmSync(dir, { recursive: true, force: true });
+          activeStreams.delete(entry);
           cleaned++;
         }
       } catch { /* skip */ }
@@ -175,4 +244,4 @@ function getVideoPath(hash) {
   return videoHashMap.get(hash);
 }
 
-module.exports = { hashVideoPath, registerVideo, getOrCreateHls, HLS_CACHE_PATH, getVideoPath };
+module.exports = { hashVideoPath, registerVideo, getOrCreateHls, HLS_CACHE_PATH, getVideoPath, touchStream };
