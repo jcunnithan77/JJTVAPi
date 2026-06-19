@@ -618,6 +618,57 @@ router.post('/admin-api/media/move', async (req, res) => {
   }
 });
 
+router.post('/admin-api/media/rename-playlist', async (req, res) => {
+  const { oldPlaylist, newPlaylist } = req.body || {};
+  if (!oldPlaylist || !newPlaylist) return res.status(400).json({ error: 'Missing parameters' });
+
+  const oldDir = path.join(MEDIA_PATH, oldPlaylist);
+  const newDir = path.join(MEDIA_PATH, newPlaylist);
+
+  if (!fs.existsSync(oldDir)) return res.status(404).json({ error: 'Playlist not found' });
+  if (fs.existsSync(newDir)) return res.status(400).json({ error: 'New playlist name already exists' });
+
+  try {
+    fs.renameSync(oldDir, newDir);
+    await db.renamePlaylist(oldPlaylist, newPlaylist);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/admin-api/media/rename-video', async (req, res) => {
+  const { playlist, oldFilename, newFilename } = req.body || {};
+  if (!playlist || !oldFilename || !newFilename) return res.status(400).json({ error: 'Missing parameters' });
+
+  const playlistDir = path.join(MEDIA_PATH, playlist);
+  const oldPath = path.join(playlistDir, oldFilename);
+  const newPath = path.join(playlistDir, newFilename);
+
+  if (!fs.existsSync(oldPath)) return res.status(404).json({ error: 'Video not found' });
+  if (fs.existsSync(newPath)) return res.status(400).json({ error: 'New video name already exists' });
+
+  try {
+    fs.renameSync(oldPath, newPath);
+
+    const oldBase = oldPath.replace(/\.[^.]+$/, '');
+    const newBase = newPath.replace(/\.[^.]+$/, '');
+    for (const ext of IMAGE_EXTENSIONS) {
+      if (fs.existsSync(oldBase + ext)) {
+        fs.renameSync(oldBase + ext, newBase + ext);
+        break;
+      }
+    }
+
+    const newVpath = path.relative(MEDIA_PATH, newPath).replace(/\\/g, '/');
+    const newTitle = path.basename(newFilename, path.extname(newFilename));
+    await db.renameVideo(playlist, oldFilename, newFilename, newTitle, newVpath);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const multer = require('multer');
 
 const storage = multer.diskStorage({

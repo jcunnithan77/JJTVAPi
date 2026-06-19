@@ -623,6 +623,30 @@ async function isPlaylistAcknowledged(playlist) {
   return row ? row.acknowledged === 1 : false;
 }
 
+async function renamePlaylist(oldName, newName) {
+  const db = await getDb();
+  await db.run(`UPDATE schedules SET playlist = ? WHERE playlist = ?`, [newName, oldName]);
+  await db.run(`UPDATE daily_playlist_progress SET playlist = ? WHERE playlist = ?`, [newName, oldName]);
+  await db.run(`UPDATE video_watch_log SET playlist = ? WHERE playlist = ?`, [newName, oldName]);
+  await db.run(`UPDATE active_acknowledgements SET playlist = ? WHERE playlist = ?`, [newName, oldName]);
+  await db.run(`UPDATE scheduled_downloads SET playlist = ? WHERE playlist = ?`, [newName, oldName]);
+
+  const videos = await db.all(`SELECT vpath FROM media_cache WHERE playlist = ?`, [oldName]);
+  for (const v of videos) {
+    const rest = v.vpath.substring(oldName.length);
+    const newVpath = newName + rest;
+    await db.run(`UPDATE media_cache SET playlist = ?, vpath = ? WHERE vpath = ?`, [newName, newVpath, v.vpath]);
+  }
+}
+
+async function renameVideo(playlist, oldFilename, newFilename, newTitle, newVpath) {
+  const db = await getDb();
+  await db.run(
+    `UPDATE media_cache SET filename = ?, title = ?, vpath = ? WHERE playlist = ? AND filename = ?`,
+    [newFilename, newTitle, newVpath, playlist, oldFilename]
+  );
+}
+
 module.exports = {
   initDb, getSettings, setSetting, getOverlay, setOverlay,
   getSchedules, getSchedule, upsertSchedule, deleteSchedule,
@@ -634,7 +658,8 @@ module.exports = {
   recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted,
   clearDailyProgress, getPlaylistProgress, addPlaylistProgress,
   getLiveStreams, addLiveStream, deleteLiveStream,
-  setPlaylistAcknowledgement, isPlaylistAcknowledged
+  setPlaylistAcknowledgement, isPlaylistAcknowledged,
+  renamePlaylist, renameVideo
 };
 
 // --- Live Streams ---
