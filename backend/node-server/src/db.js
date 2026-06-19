@@ -372,9 +372,22 @@ async function getPlaylistsForDisplay() {
   const today = now.toISOString().slice(0, 10);
   const nowM = now.getHours() * 60 + now.getMinutes();
 
-  const schedules = await db.all(
-    `SELECT * FROM schedules ORDER BY priority DESC`
-  );
+  const schedules = await db.all(`SELECT * FROM schedules`);
+  
+  // Inject cached playlists that aren't in schedules yet, so they act as timeless defaults
+  const cachedNames = await db.all(`SELECT playlist FROM media_cache GROUP BY playlist`);
+  const scheduledNamesSet = new Set(schedules.map(s => s.playlist));
+  for (const c of cachedNames) {
+    if (c.playlist && !scheduledNamesSet.has(c.playlist)) {
+      schedules.push({
+        playlist: c.playlist,
+        start_time: '',
+        end_time: '',
+        is_blocked: 0,
+        min_duration: 0
+      });
+    }
+  }
 
   const blockedNames = schedules.filter(s => s.is_blocked === 1).map(s => s.playlist);
 
@@ -445,7 +458,7 @@ async function getPlaylistsForDisplay() {
     let anyCompleted = false;
 
     for (const row of completionRows) {
-      if (row.playlist === scheduledPlaylist || row.playlist.startsWith(scheduledPlaylist + '/')) {
+      if (row.playlist && (row.playlist === scheduledPlaylist || row.playlist.startsWith(scheduledPlaylist + '/'))) {
         totalWatched += row.watched_duration;
         if (row.completed === 1) {
           anyCompleted = true;
@@ -619,7 +632,7 @@ async function getPlaylistProgress(playlist) {
   
   let total = 0;
   for (const r of rows) {
-    if (r.playlist === playlist || r.playlist.startsWith(playlist + '/')) {
+    if (r.playlist && (r.playlist === playlist || r.playlist.startsWith(playlist + '/'))) {
       total += r.watched_duration;
     }
   }
