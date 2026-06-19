@@ -118,14 +118,29 @@ router.get('/api/playlists', async (req, res) => {
   console.log(`[TV-API] GET /api/playlists from ${req.ip}`);
   if (await db.isSystemAsleep()) return res.json([]);
 
-
   try {
+    const displayInfo = await db.getPlaylistsForDisplay();
     const cached = await db.getCachedPlaylists();
     const result = [];
+
+    function isAllowed(name) {
+      // Check blocked
+      if (displayInfo.blocked && displayInfo.blocked.some(b => name === b || name.startsWith(b + '/'))) return false;
+      if (displayInfo.mode === 'all') return true;
+      if (displayInfo.mode === 'priority') {
+        return displayInfo.playlists.some(p => name === p || name.startsWith(p + '/'));
+      }
+      // fallback mode
+      if (displayInfo.excludeScheduled) {
+        for (const ex of displayInfo.excludeScheduled) {
+          if (name === ex || name.startsWith(ex + '/')) return false;
+        }
+      }
+      return true;
+    }
     
     for (const p of cached) {
-      const isAllowed = await db.isPlaylistAllowed(p.name);
-      if (!isAllowed) continue;
+      if (!isAllowed(p.name)) continue;
 
       const itemPath = path.join(MEDIA_PATH, p.name);
       const thumb = getThumbnail(itemPath);
@@ -144,8 +159,7 @@ router.get('/api/playlists', async (req, res) => {
     if (db.getLiveStreams) {
       const liveStreams = await db.getLiveStreams();
       if (liveStreams && liveStreams.length > 0) {
-        const isLiveAllowed = await db.isPlaylistAllowed('Live');
-        if (isLiveAllowed) {
+        if (isAllowed('Live')) {
           result.push({
             id: 'Live',
             name: 'Live TV',
@@ -164,6 +178,7 @@ router.get('/api/playlists', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
 
 router.get('/api/playlists/:id(*)', async (req, res) => {
   const playlistId = req.params.id;
@@ -238,8 +253,8 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       }
     }
 
-    if (isMandatory) {
-      // Find the first video that is NOT demoted (hasn't hit rotation limit)
+    if (isMandatory && remainingSecsInt > 0) {
+      // Still needs more watch time - only show the NEXT unwatched video to enforce mandatory viewing
       const nextVideo = sorted.find(v => !demotedSet.has(v.vhash));
       if (nextVideo) {
         sorted = [nextVideo];
@@ -248,6 +263,7 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
         sorted = [sorted[0]];
       }
     }
+    // If mandatory time is fulfilled (remainingSecsInt === 0), show ALL videos freely
 
     const videoList = sorted.map(v => {
       // Register in hash map for HLS

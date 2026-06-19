@@ -476,17 +476,24 @@ async function getPlaylistsForDisplay() {
   const pendingTimed = activeTimed.filter(p => !completedSet.has(p));
   const pendingTimeless = activeTimeless.filter(p => !completedSet.has(p));
 
-  // 1. If any timed schedule is active, ONLY that playlist should show
+  // 1. If any timed schedule is pending, show ALL pending timed playlists
   if (pendingTimed.length > 0) {
-    return { mode: 'priority', playlists: [pendingTimed[0]], blocked: blockedNames };
+    return { mode: 'priority', playlists: pendingTimed, blocked: blockedNames };
   }
   
-  // 2. Otherwise, if there is a timeless schedule, it should show
+  // 2. If any timeless mandatory schedule is pending, show ALL of them
   if (pendingTimeless.length > 0) {
-    return { mode: 'priority', playlists: [pendingTimeless[0]], blocked: blockedNames };
+    // Separate mandatory (has min_duration or mandatory_view) from regular timeless
+    const pendingMandatory = pendingTimeless.filter(p => (minDurationMap[p] || 0) > 0);
+    if (pendingMandatory.length > 0) {
+      // Show ONLY mandatory playlists until they are done
+      return { mode: 'priority', playlists: pendingMandatory, blocked: blockedNames };
+    }
+    // All pending timeless are regular (no min_duration), show all content
+    return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames, blocked: blockedNames };
   }
 
-  // 3. Fallback to unscheduled
+  // 3. All mandatory playlists are completed - show all content
   return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames, blocked: blockedNames };
 }
 
