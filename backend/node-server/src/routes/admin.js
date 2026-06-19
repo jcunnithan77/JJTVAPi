@@ -32,10 +32,15 @@ let MEDIA_PATH = '';
 
 function setMediaPath(p) { MEDIA_PATH = p; }
 
+async function triggerTvReload() {
+  await db.setSetting('force_reload_timestamp', Date.now().toString());
+}
+
 router.get('/admin-api/settings', async (req, res) => res.json(await db.getSettings()));
 
 router.post('/admin-api/settings', async (req, res) => {
   for (const [k, v] of Object.entries(req.body || {})) await db.setSetting(k, v);
+  await triggerTvReload();
   res.json(await db.getSettings());
 });
 
@@ -47,6 +52,7 @@ router.post('/admin-api/override', async (req, res) => {
   } else {
     await db.setSetting('mandatory_override_until', '');
   }
+  await triggerTvReload();
   res.json({ success: true });
 });
 
@@ -100,6 +106,7 @@ router.post('/admin-api/schedules', async (req, res) => {
     parseInt(min_repeat || 1),
     parseInt(max_repeat !== undefined ? max_repeat : 3)
   );
+  await triggerTvReload();
   res.json({ success: true });
 });
 
@@ -112,6 +119,7 @@ router.post('/admin-api/acknowledge', async (req, res) => {
 
 router.delete('/admin-api/schedules/:playlist(*)', async (req, res) => {
   await db.deleteSchedule(req.params.playlist);
+  await triggerTvReload();
   res.json({ success: true });
 });
 
@@ -137,11 +145,13 @@ router.post('/admin-api/force-lock-profiles', async (req, res) => {
   const { id, name, icon_url, audio_url, message, duration_minutes } = req.body || {};
   if (!name) return res.status(400).json({ error: 'Name is required' });
   const newId = await db.upsertLockProfile(id || null, name, icon_url || '', audio_url || '', message || '', duration_minutes || 0);
+  await triggerTvReload();
   res.json({ success: true, id: newId });
 });
 
 router.delete('/admin-api/force-lock-profiles/:id', async (req, res) => {
   await db.deleteLockProfile(parseInt(req.params.id));
+  await triggerTvReload();
   res.json({ success: true });
 });
 
@@ -152,6 +162,7 @@ router.post('/admin-api/force-lock-profiles/:id/activate', async (req, res) => {
   await db.setSetting('force_lock_profile_id', String(id));
   await db.setSetting('force_sleep', 'true');
   await db.setSetting('force_lock_activated_at', String(Date.now()));
+  await triggerTvReload();
   res.json({ success: true });
 });
 
@@ -159,6 +170,7 @@ router.post('/admin-api/force-lock-profiles/deactivate', async (req, res) => {
   await db.setSetting('force_sleep', 'false');
   await db.setSetting('force_lock_profile_id', '');
   await db.setSetting('force_lock_activated_at', '');
+  await triggerTvReload();
   res.json({ success: true });
 });
 
@@ -169,6 +181,7 @@ router.post('/admin-api/overlay', async (req, res) => {
   for (const [k, v] of Object.entries(req.body || {})) {
     if (allowed.has(k)) await db.setOverlay(k, v);
   }
+  await triggerTvReload();
   res.json({ success: true });
 });
 
@@ -471,6 +484,7 @@ router.delete('/admin-api/media/:playlist/:filename(*)', async (req, res) => {
       const tp = base + ext;
       if (fs.existsSync(tp)) { fs.unlinkSync(tp); break; }
     }
+    await triggerTvReload();
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -612,6 +626,7 @@ router.post('/admin-api/media/move', async (req, res) => {
       WHERE playlist = ? AND filename = ?
     `, [newPlaylist, newVpath, playlist, filename]);
 
+    await triggerTvReload();
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -631,6 +646,7 @@ router.post('/admin-api/media/rename-playlist', async (req, res) => {
   try {
     fs.renameSync(oldDir, newDir);
     await db.renamePlaylist(oldPlaylist, newPlaylist);
+    await triggerTvReload();
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -663,6 +679,7 @@ router.post('/admin-api/media/rename-video', async (req, res) => {
     const newVpath = path.relative(MEDIA_PATH, newPath).replace(/\\/g, '/');
     const newTitle = path.basename(newFilename, path.extname(newFilename));
     await db.renameVideo(playlist, oldFilename, newFilename, newTitle, newVpath);
+    await triggerTvReload();
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -893,6 +910,7 @@ router.post('/admin-api/live', async (req, res) => {
     const { id, title, url, thumbnail } = req.body;
     if (!title || !url) return res.status(400).json({ error: 'Title and URL are required' });
     const newId = await db.addLiveStream(id, title, url, thumbnail);
+    await triggerTvReload();
     res.json({ success: true, id: newId });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -902,6 +920,7 @@ router.post('/admin-api/live', async (req, res) => {
 router.delete('/admin-api/live/:id', async (req, res) => {
   try {
     await db.deleteLiveStream(req.params.id);
+    await triggerTvReload();
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

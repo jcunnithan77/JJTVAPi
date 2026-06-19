@@ -433,19 +433,30 @@ async function getPlaylistsForDisplay() {
     return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames, blocked: blockedNames };
   }
 
-  const placeholders = allActive.map(() => '?').join(',');
   const completionRows = await db.all(
-    `SELECT playlist, completed, watched_duration FROM daily_playlist_progress WHERE date = ? AND playlist IN (${placeholders})`,
-    [today, ...allActive]
+    `SELECT playlist, completed, watched_duration FROM daily_playlist_progress WHERE date = ?`,
+    [today]
   );
   
   const completedSet = new Set();
-  for (const row of completionRows) {
-    const minDur = minDurationMap[row.playlist];
-    if (row.completed === 1) {
-      completedSet.add(row.playlist);
-    } else if (minDur > 0 && row.watched_duration >= minDur * 60) {
-      completedSet.add(row.playlist);
+  for (const scheduledPlaylist of allActive) {
+    const minDur = minDurationMap[scheduledPlaylist];
+    let totalWatched = 0;
+    let anyCompleted = false;
+
+    for (const row of completionRows) {
+      if (row.playlist === scheduledPlaylist || row.playlist.startsWith(scheduledPlaylist + '/')) {
+        totalWatched += row.watched_duration;
+        if (row.completed === 1) {
+          anyCompleted = true;
+        }
+      }
+    }
+
+    if (anyCompleted) {
+      completedSet.add(scheduledPlaylist);
+    } else if (minDur > 0 && totalWatched >= minDur * 60) {
+      completedSet.add(scheduledPlaylist);
     }
   }
 
@@ -604,8 +615,15 @@ async function clearDailyProgress() {
 async function getPlaylistProgress(playlist) {
   const db = await getDb();
   const today = new Date().toISOString().slice(0, 10);
-  const row = await db.get(`SELECT watched_duration FROM daily_playlist_progress WHERE playlist = ? AND date = ?`, [playlist, today]);
-  return row ? row.watched_duration : 0;
+  const rows = await db.all(`SELECT playlist, watched_duration FROM daily_playlist_progress WHERE date = ?`, [today]);
+  
+  let total = 0;
+  for (const r of rows) {
+    if (r.playlist === playlist || r.playlist.startsWith(playlist + '/')) {
+      total += r.watched_duration;
+    }
+  }
+  return total;
 }
 
 // --- Acknowledgements ---

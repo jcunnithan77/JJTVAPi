@@ -207,15 +207,19 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
     let reqAck = false;
     let minRepeat = 1;
     let maxRepeat = 3;
+    let parentScheduleName = playlistId;
+
     let parts = playlistId.split('/');
     for (let i = parts.length; i > 0; i--) {
-      const parentSchedule = await db.getSchedule(parts.slice(0, i).join('/'));
+      const parentName = parts.slice(0, i).join('/');
+      const parentSchedule = await db.getSchedule(parentName);
       if (parentSchedule) {
         if (parentSchedule.mandatory_view === 1) isMandatory = true;
         if (parentSchedule.min_duration > 0) minDuration = parentSchedule.min_duration;
         if (parentSchedule.req_ack === 1) reqAck = true;
         if (parentSchedule.min_repeat !== undefined) minRepeat = parentSchedule.min_repeat;
         if (parentSchedule.max_repeat !== undefined) maxRepeat = parentSchedule.max_repeat;
+        parentScheduleName = parentName;
         break;
       }
     }
@@ -225,7 +229,7 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
     let remainingTimeMsg = '';
     let remainingSecsInt = 0;
     if (minDuration > 0) {
-      const watchedSecs = await db.getPlaylistProgress(playlistId);
+      const watchedSecs = await db.getPlaylistProgress(parentScheduleName);
       remainingSecsInt = (minDuration * 60) - watchedSecs;
       if (remainingSecsInt > 0) {
         remainingTimeMsg = `Mandatory: ${Math.ceil(remainingSecsInt / 60)} minutes remaining`;
