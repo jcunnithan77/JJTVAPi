@@ -85,66 +85,33 @@ function startHlsConversion(videoPath, cacheDir) {
 
     const args = [
       '-i', videoPath,
-      '-c:v', 'copy',          // Copy video stream (no re-encode) — much faster, no mid-play breaks
+      '-c:v', 'libx264',       // Transcode to H.264 for universal compatibility
+      '-preset', 'ultrafast',  // Minimum latency for starting playback
+      '-crf', '23',            // Good balance of quality and file size
       '-c:a', 'aac',           // Re-encode audio to AAC for compatibility
       '-b:a', '128k',
       '-start_number', '0',
       '-hls_time', String(HLS_SEGMENT_DURATION),
       '-hls_list_size', '0',   // Keep all segments (VOD mode)
-      '-hls_flags', 'independent_segments+append_list',
+      '-hls_flags', 'independent_segments', // Removed append_list as it breaks restarts
       '-hls_segment_type', 'mpegts',
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', // Ensure even dimensions for H.264
       '-f', 'hls',
       manifestPath,
     ];
 
-    // Fallback args for videos that need re-encoding (e.g. h.265/hevc)
-    const argsTranscode = [
-      '-i', videoPath,
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-crf', '23',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-start_number', '0',
-      '-hls_time', String(HLS_SEGMENT_DURATION),
-      '-hls_list_size', '0',
-      '-hls_flags', 'independent_segments+append_list',
-      '-hls_segment_type', 'mpegts',
-      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-      '-f', 'hls',
-      manifestPath,
-    ];
-
-    console.log(`[HLS] Starting conversion: ${path.basename(videoPath)}`);
-    let ffmpeg = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    console.log(`[HLS] Starting conversion (transcode): ${path.basename(videoPath)}`);
+    const ffmpeg = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
     let stderr = '';
     ffmpeg.stderr.on('data', d => { stderr += d.toString(); });
 
     ffmpeg.on('close', code => {
-      if (code !== 0) {
-        // Copy mode failed — retry with full transcode (handles h.265, weird codecs, etc.)
-        console.warn(`[HLS] Copy mode failed (${code}) for ${path.basename(videoPath)}, retrying with transcode...`);
-        stderr = '';
-        // Clean up any partial output
-        try {
-          const files = fs.readdirSync(cacheDir);
-          for (const f of files) fs.unlinkSync(path.join(cacheDir, f));
-        } catch { /* ignore */ }
-
-        ffmpeg = spawn(FFMPEG_PATH, argsTranscode, { stdio: ['ignore', 'ignore', 'pipe'] });
-        ffmpeg.stderr.on('data', d => { stderr += d.toString(); });
-        ffmpeg.on('close', code2 => {
-          ongoingConversions.delete(cacheDir);
-          if (code2 === 0) {
-            console.log(`[HLS] Transcode complete: ${path.basename(videoPath)}`);
-          } else {
-            console.error(`[HLS] FFmpeg transcode error (${code2}) for ${videoPath}: ${stderr.slice(-500)}`);
-          }
-        });
-      } else {
-        ongoingConversions.delete(cacheDir);
+      ongoingConversions.delete(cacheDir);
+      if (code === 0) {
         console.log(`[HLS] Conversion complete: ${path.basename(videoPath)}`);
+      } else {
+        console.error(`[HLS] FFmpeg error (${code}) for file ${videoPath}: ${stderr.slice(-500)}`);
       }
     });
 
