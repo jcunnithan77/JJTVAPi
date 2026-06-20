@@ -399,6 +399,35 @@ async function getPlaylistsForDisplay() {
     }
   }
 
+  // Check for automatic Free Time slots
+  if (settings.free_time_slots) {
+    try {
+      const freeSlots = JSON.parse(settings.free_time_slots);
+      if (Array.isArray(freeSlots)) {
+        for (const slot of freeSlots) {
+          if (slot.start && slot.duration) {
+            const startM = _parseMins(slot.start);
+            const duration = parseInt(slot.duration);
+            if (!isNaN(duration) && duration > 0) {
+              const endM = (startM + duration) % 1440;
+              let inFreeTime = false;
+              if (startM < endM) {
+                inFreeTime = (nowM >= startM && nowM < endM);
+              } else {
+                inFreeTime = (nowM >= startM || nowM < endM); // Wraps around midnight
+              }
+              if (inFreeTime) {
+                return { mode: 'all', blocked: blockedNames }; // Automatic Free Time active
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[DB] Failed to parse free_time_slots', e);
+    }
+  }
+
   const activeTimed = [];
   const activeTimeless = [];
   const scheduledNames = new Set();
