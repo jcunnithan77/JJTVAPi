@@ -51,9 +51,8 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
   activeDownloads[jobId] = { status: 'downloading', percent: 0, title: 'Initializing...', playlist };
 
   const ytdlpArgs = [
-    '-f', 'bv*+ba/b',
-    '-S', 'res,ext:mp4:m4a',
-    '--merge-output-format', 'mkv',
+    '-f', 'bestvideo[ext=mp4][vcodec^=avc]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '--merge-output-format', 'mp4',
     '--no-check-certificate',
     '-o', path.join(targetDir, '%(uploader|Unknown)s', '%(playlist_title|Misc)s', '%(id)s.%(ext)s'),
     '--write-thumbnail',
