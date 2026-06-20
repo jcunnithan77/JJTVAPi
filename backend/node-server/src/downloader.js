@@ -10,7 +10,7 @@ const { spawn } = require('child_process');
 const { EventEmitter } = require('events');
 const path = require('path');
 const fs = require('fs');
-const { scanFolder } = require('./scanner');
+const { scanFolder, scanAll } = require('./scanner');
 
 const os = require('os');
 
@@ -135,7 +135,7 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
       
       // Trigger scan of the folder to update database cache
       if (code === 0) {
-        scanFolder(mediaPath, playlist).catch(e => console.error('[Downloader] Post-scan error:', e.message));
+        scanAll(mediaPath).catch(e => console.error('[Downloader] Post-scan error:', e.message));
       }
 
       resolve();
