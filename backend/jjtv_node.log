@@ -1,25 +1,12 @@
-[4:11:14 PM] [TV-API] GET /api/playlists from 127.0.0.1
-[4:35:17 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[4:35:17 PM] [Scanner] Full scan complete.
-[5:05:17 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[5:05:17 PM] [Scanner] Full scan complete.
-[5:35:17 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[5:35:17 PM] [Scanner] Full scan complete.
-[6:05:18 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[6:05:18 PM] [Scanner] Full scan complete.
-[6:35:18 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[6:35:18 PM] [Scanner] Full scan complete.
-[7:05:18 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[7:05:18 PM] [Scanner] Full scan complete.
-[7:35:18 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[7:35:18 PM] [Scanner] Full scan complete.
-[8:05:18 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[8:05:18 PM] [Scanner] Full scan complete.
-[8:35:18 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[8:35:18 PM] [Scanner] Full scan complete.
-[9:05:18 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[9:05:18 PM] [Scanner] Full scan complete.
-[9:35:18 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[9:35:18 PM] [Scanner] Full scan complete.
-[10:05:18 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[10:05:18 PM] [Scanner] Full scan complete.
+[2:21:15 PM] ERROR: [Config] Failed to create MEDIA_PATH E:/Blippi/downloads. Falling back to default. Error: ENOENT: no such file or directory, mkdir 'E:\Blippi\downloads'
+[2:21:16 PM] [Config] Media Path: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
+[2:21:16 PM] [DB] Initialized.
+[2:21:16 PM] [Scheduler] Started — checking every minute for scheduled downloads.
+[2:21:16 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
+[2:21:16 PM] 
+🚀 JJtv Server (Node.js) is running on:
+[2:21:16 PM]    - Local:  http://localhost:5000
+[2:21:16 PM]    - Network: http://0.0.0.0:5000
+
+[2:21:16 PM] Press Ctrl+C to stop.
+[2:21:16 PM] [Scanner] Full scan complete.

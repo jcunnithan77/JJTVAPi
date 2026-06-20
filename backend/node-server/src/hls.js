@@ -85,17 +85,12 @@ function startHlsConversion(videoPath, cacheDir) {
 
     const args = [
       '-i', videoPath,
-      '-c:v', 'libx264',       // Transcode to H.264 for universal compatibility
-      '-preset', 'ultrafast',  // Minimum latency for starting playback
-      '-crf', '23',            // Good balance of quality and file size
-      '-c:a', 'aac',           // Re-encode audio to AAC for compatibility
-      '-b:a', '128k',
+      '-c', 'copy',            // Fast copy, no CPU overhead (prevents server crashes/closing)
       '-start_number', '0',
       '-hls_time', String(HLS_SEGMENT_DURATION),
       '-hls_list_size', '0',   // Keep all segments (VOD mode)
-      '-hls_flags', 'independent_segments', // Removed append_list as it breaks restarts
+      '-hls_playlist_type', 'vod',
       '-hls_segment_type', 'mpegts',
-      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', // Ensure even dimensions for H.264
       '-f', 'hls',
       manifestPath,
     ];
