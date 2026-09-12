@@ -30,6 +30,13 @@ async function initDb() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS overlay_config (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS rotation_steps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      step_order INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      playlist TEXT,
+      duration_minutes INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS media_cache (
       vpath TEXT PRIMARY KEY,
       playlist TEXT,
@@ -110,6 +117,8 @@ async function initDb() {
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_audio', '')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('force_lock_image', '')");
   await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('stream_through_lan', 'false')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('rotation_enabled', 'false')");
+  await db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('rotation_started_at', '')");
 
   // Overlay defaults
   await db.run("INSERT OR IGNORE INTO overlay_config (key, value) VALUES ('enabled', 'false')");
@@ -167,6 +176,95 @@ async function upsertSchedule(playlist, startTime, endTime, lockMessage, lockAud
 async function deleteSchedule(playlist) {
   const db = await getDb();
   await db.run(`DELETE FROM schedules WHERE playlist = ?`, [playlist]);
+}
+
+// --- Rotation (repeating play/pause cycle across playlists) ---
+
+async function getRotationSteps() {
+  const db = await getDb();
+  return await db.all(`SELECT * FROM rotation_steps ORDER BY step_order ASC`);
+}
+
+async function getRotationConfig() {
+  const settings = await getSettings();
+  return {
+    enabled: settings.rotation_enabled === 'true',
+    started_at: parseInt(settings.rotation_started_at || '0') || 0,
+    steps: await getRotationSteps()
+  };
+}
+
+// Replaces the whole step sequence and (re)starts the cycle from step 1.
+async function setRotationConfig(enabled, steps) {
+  const db = await getDb();
+  await db.run('DELETE FROM rotation_steps');
+  let order = 0;
+  for (const step of (steps || [])) {
+    const type = step.type === 'pause' ? 'pause' : 'play';
+    const minutes = Math.max(1, parseInt(step.duration_minutes) || 0);
+    if (!minutes) continue;
+    const playlist = type === 'play' ? (step.playlist || '') : null;
+    if (type === 'play' && !playlist) continue; // a play step needs a playlist
+    await db.run(
+      `INSERT INTO rotation_steps (step_order, type, playlist, duration_minutes) VALUES (?, ?, ?, ?)`,
+      [order, type, playlist, minutes]
+    );
+    order++;
+  }
+  await setSetting('rotation_enabled', enabled ? 'true' : 'false');
+  await setSetting('rotation_started_at', String(Date.now()));
+}
+
+async function setRotationEnabled(enabled) {
+  await setSetting('rotation_enabled', enabled ? 'true' : 'false');
+  if (enabled) {
+    await setSetting('rotation_started_at', String(Date.now()));
+  }
+}
+
+async function restartRotationCycle() {
+  await setSetting('rotation_started_at', String(Date.now()));
+}
+
+// Computes which step of the cycle is active right now, based on elapsed
+// real time since the cycle was (re)started — not the wall clock.
+async function getRotationStatus() {
+  const settings = await getSettings();
+  const enabled = settings.rotation_enabled === 'true';
+  const steps = await getRotationSteps();
+
+  if (!enabled || steps.length === 0) {
+    return { enabled: false, steps };
+  }
+
+  const totalMs = steps.reduce((sum, s) => sum + s.duration_minutes * 60000, 0);
+  if (totalMs <= 0) {
+    return { enabled: false, steps };
+  }
+
+  const startedAt = parseInt(settings.rotation_started_at || '0') || Date.now();
+  let elapsed = (Date.now() - startedAt) % totalMs;
+  if (elapsed < 0) elapsed += totalMs;
+
+  let acc = 0;
+  for (let i = 0; i < steps.length; i++) {
+    const durMs = steps[i].duration_minutes * 60000;
+    if (elapsed < acc + durMs) {
+      return {
+        enabled: true,
+        mode: steps[i].type, // 'play' | 'pause'
+        playlist: steps[i].type === 'play' ? steps[i].playlist : null,
+        stepIndex: i,
+        remainingMs: (acc + durMs) - elapsed,
+        totalMs,
+        steps
+      };
+    }
+    acc += durMs;
+  }
+
+  // Rounding safety net — treat as the final step's pause.
+  return { enabled: true, mode: 'pause', playlist: null, stepIndex: steps.length - 1, remainingMs: 0, totalMs, steps };
 }
 
 async function getScheduledDownloads() {
@@ -324,6 +422,33 @@ async function isSystemAsleep() {
   const now = await getNowInConfiguredTimezone();
   const nowM = now.getHours() * 60 + now.getMinutes();
 
+  // Free Time overrides ALL sleep/lock schedules
+  if (s.free_time_slots) {
+    try {
+      const freeSlots = JSON.parse(s.free_time_slots);
+      if (Array.isArray(freeSlots)) {
+        for (const slot of freeSlots) {
+          if (!slot.start || isNaN(parseInt(slot.duration))) continue;
+          const startM = _parseMins(slot.start);
+          const duration = parseInt(slot.duration);
+          const endM = (startM + duration) % 1440;
+          let inFreeTime = false;
+          if (startM < endM) {
+            inFreeTime = (nowM >= startM && nowM < endM);
+          } else {
+            inFreeTime = (nowM >= startM || nowM < endM);
+          }
+          if (inFreeTime) {
+            return false; // System is awake during free time
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[DB] Failed to parse free_time_slots', e);
+    }
+  }
+
+
   if (s.sleep_slots) {
     try {
       const slots = JSON.parse(s.sleep_slots);
@@ -425,6 +550,17 @@ async function getPlaylistsForDisplay() {
       }
     } catch (e) {
       console.error('[DB] Failed to parse free_time_slots', e);
+    }
+  }
+
+  // Rotation cycle: a shared, ordered play/pause sequence across playlists.
+  // While a 'play' step is active, only its playlist may show; during a 'pause'
+  // step (or when disabled) we fall through to the normal scheduling below.
+  const rotationStatus = await getRotationStatus();
+  if (rotationStatus.enabled && rotationStatus.mode === 'play' && rotationStatus.playlist) {
+    const rotationBlocked = blockedNames.some(b => rotationStatus.playlist === b || rotationStatus.playlist.startsWith(b + '/'));
+    if (!rotationBlocked) {
+      return { mode: 'priority', playlists: [rotationStatus.playlist], blocked: blockedNames };
     }
   }
 
@@ -726,7 +862,8 @@ module.exports = {
   clearDailyProgress, getPlaylistProgress, addPlaylistProgress,
   getLiveStreams, addLiveStream, deleteLiveStream,
   setPlaylistAcknowledgement, isPlaylistAcknowledged,
-  renamePlaylist, renameVideo
+  renamePlaylist, renameVideo,
+  getRotationConfig, setRotationConfig, setRotationEnabled, restartRotationCycle, getRotationStatus
 };
 
 // --- Live Streams ---

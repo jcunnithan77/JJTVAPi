@@ -123,6 +123,37 @@ router.delete('/admin-api/schedules/:playlist(*)', async (req, res) => {
   res.json({ success: true });
 });
 
+// --- Rotation (repeating play/pause cycle across playlists) ---
+
+router.get('/admin-api/rotation', async (req, res) => {
+  res.json(await db.getRotationConfig());
+});
+
+router.get('/admin-api/rotation/status', async (req, res) => {
+  res.json(await db.getRotationStatus());
+});
+
+router.post('/admin-api/rotation', async (req, res) => {
+  const { enabled, steps } = req.body || {};
+  if (!Array.isArray(steps)) return res.status(400).json({ error: 'steps array is required' });
+  await db.setRotationConfig(!!enabled, steps);
+  await triggerTvReload();
+  res.json(await db.getRotationConfig());
+});
+
+router.post('/admin-api/rotation/toggle', async (req, res) => {
+  const { enabled } = req.body || {};
+  await db.setRotationEnabled(!!enabled);
+  await triggerTvReload();
+  res.json(await db.getRotationConfig());
+});
+
+router.post('/admin-api/rotation/restart', async (req, res) => {
+  await db.restartRotationCycle();
+  await triggerTvReload();
+  res.json(await db.getRotationConfig());
+});
+
 router.post('/admin-api/force-reload', async (req, res) => {
   try {
     await db.clearDailyProgress();
