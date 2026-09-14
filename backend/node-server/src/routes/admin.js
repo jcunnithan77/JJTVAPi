@@ -115,35 +115,63 @@ router.delete('/admin-api/schedules/:playlist(*)', async (req, res) => {
   res.json({ success: true });
 });
 
-// --- Rotation (repeating play/pause cycle across playlists) ---
+// --- Rotation (named groups of repeating play/pause cycles, each independently on/off) ---
 
-router.get('/admin-api/rotation', async (req, res) => {
-  res.json(await db.getRotationConfig());
+router.get('/admin-api/rotation/groups', async (req, res) => {
+  res.json(await db.getRotationGroups());
 });
 
 router.get('/admin-api/rotation/status', async (req, res) => {
-  res.json(await db.getRotationStatus());
+  res.json(await db.getAllGroupStatuses());
 });
 
-router.post('/admin-api/rotation', async (req, res) => {
-  const { enabled, steps } = req.body || {};
+router.post('/admin-api/rotation/groups', async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  const id = await db.createRotationGroup(name.trim());
+  res.json({ success: true, id });
+});
+
+router.post('/admin-api/rotation/groups/:id', async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  await db.renameRotationGroup(parseInt(req.params.id), name.trim());
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
+router.delete('/admin-api/rotation/groups/:id', async (req, res) => {
+  await db.deleteRotationGroup(parseInt(req.params.id));
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
+router.post('/admin-api/rotation/groups/:id/steps', async (req, res) => {
+  const { steps } = req.body || {};
   if (!Array.isArray(steps)) return res.status(400).json({ error: 'steps array is required' });
-  await db.setRotationConfig(!!enabled, steps);
+  await db.setGroupSteps(parseInt(req.params.id), steps);
   await triggerTvReload();
-  res.json(await db.getRotationConfig());
+  res.json({ success: true });
 });
 
-router.post('/admin-api/rotation/toggle', async (req, res) => {
+router.post('/admin-api/rotation/groups/:id/enabled', async (req, res) => {
   const { enabled } = req.body || {};
-  await db.setRotationEnabled(!!enabled);
+  await db.setGroupEnabled(parseInt(req.params.id), !!enabled);
   await triggerTvReload();
-  res.json(await db.getRotationConfig());
+  res.json({ success: true });
 });
 
-router.post('/admin-api/rotation/restart', async (req, res) => {
-  await db.restartRotationCycle();
+router.post('/admin-api/rotation/groups/:id/restart', async (req, res) => {
+  await db.restartGroupCycle(parseInt(req.params.id));
   await triggerTvReload();
-  res.json(await db.getRotationConfig());
+  res.json({ success: true });
+});
+
+router.post('/admin-api/rotation/steps/:stepId/mandatory', async (req, res) => {
+  const { mandatory } = req.body || {};
+  await db.setStepMandatory(parseInt(req.params.stepId), !!mandatory);
+  await triggerTvReload();
+  res.json({ success: true });
 });
 
 router.post('/admin-api/force-reload', async (req, res) => {

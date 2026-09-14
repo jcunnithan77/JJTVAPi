@@ -30,12 +30,23 @@ async function initDb() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS overlay_config (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS rotation_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      enabled INTEGER DEFAULT 0,
+      started_at INTEGER DEFAULT 0,
+      sort_order INTEGER DEFAULT 0
+    );
     CREATE TABLE IF NOT EXISTS rotation_steps (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL,
       step_order INTEGER NOT NULL,
       type TEXT NOT NULL,
       playlist TEXT,
-      duration_minutes INTEGER NOT NULL
+      duration_minutes INTEGER NOT NULL,
+      start_time TEXT,
+      end_time TEXT,
+      mandatory INTEGER DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS media_cache (
       vpath TEXT PRIMARY KEY,
@@ -66,6 +77,29 @@ async function initDb() {
   try { await db.exec(`UPDATE schedules SET start_time = NULL, end_time = NULL, lock_message = NULL, lock_audio = NULL`); } catch(e) {}
   try { await db.exec(`ALTER TABLE daily_playlist_progress ADD COLUMN watched_duration INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE media_cache ADD COLUMN file_created_at INTEGER DEFAULT 0`); } catch(e) {}
+
+  // Rotation: steps now belong to a named, independently enable/disable-able group,
+  // and each play step may have an optional clock-time window and a mandatory lock.
+  try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN group_id INTEGER`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN start_time TEXT`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN end_time TEXT`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN mandatory INTEGER DEFAULT 0`); } catch(e) {}
+  try {
+    // One-time migration: wrap any pre-existing flat (ungrouped) rotation steps,
+    // plus the old global rotation_enabled/rotation_started_at settings, into a "Default" group.
+    const orphaned = await db.get(`SELECT COUNT(*) AS c FROM rotation_steps WHERE group_id IS NULL`);
+    if (orphaned && orphaned.c > 0) {
+      const oldEnabledRow = await db.get(`SELECT value FROM settings WHERE key = 'rotation_enabled'`);
+      const oldStartedRow = await db.get(`SELECT value FROM settings WHERE key = 'rotation_started_at'`);
+      const oldEnabled = oldEnabledRow && oldEnabledRow.value === 'true' ? 1 : 0;
+      const oldStarted = parseInt((oldStartedRow && oldStartedRow.value) || '0') || Date.now();
+      const g = await db.run(
+        `INSERT INTO rotation_groups (name, enabled, started_at, sort_order) VALUES ('Default', ?, ?, 0)`,
+        [oldEnabled, oldStarted]
+      );
+      await db.run(`UPDATE rotation_steps SET group_id = ? WHERE group_id IS NULL`, [g.lastID]);
+    }
+  } catch(e) {}
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS force_lock_profiles (
@@ -183,93 +217,176 @@ async function deleteSchedule(playlist) {
   await db.run(`DELETE FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
-// --- Rotation (repeating play/pause cycle across playlists) ---
+// --- Rotation (named groups of repeating play/pause cycles, each independently on/off) ---
 
-async function getRotationSteps() {
-  const db = await getDb();
-  return await db.all(`SELECT * FROM rotation_steps ORDER BY step_order ASC`);
+// True while nowM falls inside [startTime, endTime) (wrapping past midnight if end < start).
+// No window defined on either end means "always eligible".
+function _inClockWindow(startTime, endTime, nowM) {
+  if (!startTime || !endTime) return true;
+  const startM = _parseMins(startTime);
+  const endM = _parseMins(endTime);
+  return startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
 }
 
-async function getRotationConfig() {
-  const settings = await getSettings();
-  return {
-    enabled: settings.rotation_enabled === 'true',
-    started_at: parseInt(settings.rotation_started_at || '0') || 0,
-    steps: await getRotationSteps()
-  };
+// Pure computation of a single group's current state — no DB access, so it can be
+// reused for both the live scheduling decision and the admin status display without
+// re-querying. `nowM` = minutes since local midnight, for each step's optional time window.
+function _computeGroupStatus(group, nowM) {
+  const steps = group.steps || [];
+  const base = { groupId: group.id, name: group.name, enabled: group.enabled, steps };
+
+  if (!group.enabled || steps.length === 0) {
+    return { ...base, mode: 'off' };
+  }
+
+  // A mandatory step locks the group onto it indefinitely — ignoring elapsed-time
+  // cycling and its own time window — until an admin clears the mandatory flag.
+  const mandatoryIdx = steps.findIndex(s => s.mandatory === 1 && s.type === 'play' && s.playlist);
+  if (mandatoryIdx !== -1) {
+    return {
+      ...base,
+      mode: 'play',
+      playlist: steps[mandatoryIdx].playlist,
+      mandatory: true,
+      stepIndex: mandatoryIdx,
+      remainingMs: null,
+      totalMs: null
+    };
+  }
+
+  const totalMs = steps.reduce((sum, s) => sum + s.duration_minutes * 60000, 0);
+  if (totalMs <= 0) {
+    return { ...base, mode: 'off' };
+  }
+
+  const startedAt = group.started_at || Date.now();
+  let elapsed = (Date.now() - startedAt) % totalMs;
+  if (elapsed < 0) elapsed += totalMs;
+
+  let acc = 0;
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    const durMs = s.duration_minutes * 60000;
+    if (elapsed < acc + durMs) {
+      const remainingMs = (acc + durMs) - elapsed;
+      if (s.type === 'play') {
+        if (!_inClockWindow(s.start_time, s.end_time, nowM)) {
+          // Outside this step's allowed clock window - sit this turn out.
+          return { ...base, mode: 'pause', gated: true, stepIndex: i, remainingMs, totalMs };
+        }
+        return { ...base, mode: 'play', playlist: s.playlist, mandatory: false, stepIndex: i, remainingMs, totalMs };
+      }
+      return { ...base, mode: 'pause', stepIndex: i, remainingMs, totalMs };
+    }
+    acc += durMs;
+  }
+
+  // Rounding safety net - treat as the final step's pause.
+  return { ...base, mode: 'pause', stepIndex: steps.length - 1, remainingMs: 0, totalMs };
 }
 
-// Replaces the whole step sequence and (re)starts the cycle from step 1.
-async function setRotationConfig(enabled, steps) {
+async function getRotationGroups() {
   const db = await getDb();
-  await db.run('DELETE FROM rotation_steps');
+  const groups = await db.all(`SELECT * FROM rotation_groups ORDER BY sort_order ASC, id ASC`);
+  const steps = await db.all(`SELECT * FROM rotation_steps ORDER BY group_id ASC, step_order ASC`);
+  return groups.map(g => ({
+    id: g.id,
+    name: g.name,
+    enabled: g.enabled === 1,
+    started_at: g.started_at || 0,
+    steps: steps.filter(s => s.group_id === g.id)
+  }));
+}
+
+async function createRotationGroup(name) {
+  const db = await getDb();
+  const row = await db.get(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM rotation_groups`);
+  const result = await db.run(
+    `INSERT INTO rotation_groups (name, enabled, started_at, sort_order) VALUES (?, 0, 0, ?)`,
+    [name || 'New Group', row.next]
+  );
+  return result.lastID;
+}
+
+async function renameRotationGroup(groupId, name) {
+  const db = await getDb();
+  await db.run(`UPDATE rotation_groups SET name = ? WHERE id = ?`, [name, groupId]);
+}
+
+async function deleteRotationGroup(groupId) {
+  const db = await getDb();
+  await db.run(`DELETE FROM rotation_steps WHERE group_id = ?`, [groupId]);
+  await db.run(`DELETE FROM rotation_groups WHERE id = ?`, [groupId]);
+}
+
+// Replaces a group's whole step sequence and (re)starts its cycle from step 1.
+async function setGroupSteps(groupId, steps) {
+  const db = await getDb();
+  await db.run(`DELETE FROM rotation_steps WHERE group_id = ?`, [groupId]);
   let order = 0;
+  let mandatoryClaimed = false;
   for (const step of (steps || [])) {
     const type = step.type === 'pause' ? 'pause' : 'play';
     const minutes = Math.max(1, parseInt(step.duration_minutes) || 0);
     if (!minutes) continue;
     const playlist = type === 'play' ? (step.playlist || '') : null;
     if (type === 'play' && !playlist) continue; // a play step needs a playlist
+
+    const hasWindow = type === 'play' && step.start_time && step.end_time;
+    const startTime = hasWindow ? step.start_time : null;
+    const endTime = hasWindow ? step.end_time : null;
+
+    // Only one mandatory (repeat-until-disabled) step per group.
+    let mandatory = 0;
+    if (type === 'play' && step.mandatory && !mandatoryClaimed) {
+      mandatory = 1;
+      mandatoryClaimed = true;
+    }
+
     await db.run(
-      `INSERT INTO rotation_steps (step_order, type, playlist, duration_minutes) VALUES (?, ?, ?, ?)`,
-      [order, type, playlist, minutes]
+      `INSERT INTO rotation_steps (group_id, step_order, type, playlist, duration_minutes, start_time, end_time, mandatory)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [groupId, order, type, playlist, minutes, startTime, endTime, mandatory]
     );
     order++;
   }
-  await setSetting('rotation_enabled', enabled ? 'true' : 'false');
-  await setSetting('rotation_started_at', String(Date.now()));
+  await db.run(`UPDATE rotation_groups SET started_at = ? WHERE id = ?`, [Date.now(), groupId]);
 }
 
-async function setRotationEnabled(enabled) {
-  await setSetting('rotation_enabled', enabled ? 'true' : 'false');
+async function setGroupEnabled(groupId, enabled) {
+  const db = await getDb();
   if (enabled) {
-    await setSetting('rotation_started_at', String(Date.now()));
+    await db.run(`UPDATE rotation_groups SET enabled = 1, started_at = ? WHERE id = ?`, [Date.now(), groupId]);
+  } else {
+    await db.run(`UPDATE rotation_groups SET enabled = 0 WHERE id = ?`, [groupId]);
   }
 }
 
-async function restartRotationCycle() {
-  await setSetting('rotation_started_at', String(Date.now()));
+async function restartGroupCycle(groupId) {
+  const db = await getDb();
+  await db.run(`UPDATE rotation_groups SET started_at = ? WHERE id = ?`, [Date.now(), groupId]);
 }
 
-// Computes which step of the cycle is active right now, based on elapsed
-// real time since the cycle was (re)started — not the wall clock.
-async function getRotationStatus() {
-  const settings = await getSettings();
-  const enabled = settings.rotation_enabled === 'true';
-  const steps = await getRotationSteps();
-
-  if (!enabled || steps.length === 0) {
-    return { enabled: false, steps };
+// Sets (or clears) a single step's mandatory lock, scoped to its own group -
+// takes effect immediately on the next status check, with no cycle reset needed.
+async function setStepMandatory(stepId, mandatory) {
+  const db = await getDb();
+  const step = await db.get(`SELECT * FROM rotation_steps WHERE id = ?`, [stepId]);
+  if (!step) return;
+  if (mandatory) {
+    await db.run(`UPDATE rotation_steps SET mandatory = 0 WHERE group_id = ?`, [step.group_id]);
+    await db.run(`UPDATE rotation_steps SET mandatory = 1 WHERE id = ?`, [stepId]);
+  } else {
+    await db.run(`UPDATE rotation_steps SET mandatory = 0 WHERE id = ?`, [stepId]);
   }
+}
 
-  const totalMs = steps.reduce((sum, s) => sum + s.duration_minutes * 60000, 0);
-  if (totalMs <= 0) {
-    return { enabled: false, steps };
-  }
-
-  const startedAt = parseInt(settings.rotation_started_at || '0') || Date.now();
-  let elapsed = (Date.now() - startedAt) % totalMs;
-  if (elapsed < 0) elapsed += totalMs;
-
-  let acc = 0;
-  for (let i = 0; i < steps.length; i++) {
-    const durMs = steps[i].duration_minutes * 60000;
-    if (elapsed < acc + durMs) {
-      return {
-        enabled: true,
-        mode: steps[i].type, // 'play' | 'pause'
-        playlist: steps[i].type === 'play' ? steps[i].playlist : null,
-        stepIndex: i,
-        remainingMs: (acc + durMs) - elapsed,
-        totalMs,
-        steps
-      };
-    }
-    acc += durMs;
-  }
-
-  // Rounding safety net — treat as the final step's pause.
-  return { enabled: true, mode: 'pause', playlist: null, stepIndex: steps.length - 1, remainingMs: 0, totalMs, steps };
+// Live status of every group, for the admin UI.
+async function getAllGroupStatuses() {
+  const groups = await getRotationGroups();
+  const now = await getNowInConfiguredTimezone();
+  const nowM = now.getHours() * 60 + now.getMinutes();
+  return groups.map(g => _computeGroupStatus(g, nowM));
 }
 
 async function getScheduledDownloads() {
@@ -556,14 +673,24 @@ async function getPlaylistsForDisplay() {
     }
   }
 
-  // Rotation cycle: a shared, ordered play/pause sequence across playlists.
-  // While a 'play' step is active, only its playlist may show; during a 'pause'
-  // step (or when disabled) we fall through to the normal scheduling below.
-  const rotationStatus = await getRotationStatus();
-  if (rotationStatus.enabled && rotationStatus.mode === 'play' && rotationStatus.playlist) {
-    const rotationBlocked = blockedNames.some(b => rotationStatus.playlist === b || rotationStatus.playlist.startsWith(b + '/'));
-    if (!rotationBlocked) {
-      return { mode: 'priority', playlists: [rotationStatus.playlist], blocked: blockedNames };
+  // Rotation: every enabled group runs its own ordered play/pause cycle independently.
+  // Whatever playlist any enabled group currently wants "on" becomes forced (union across
+  // groups); if no enabled group currently wants anything on, fall through to normal scheduling.
+  const rotationGroups = await getRotationGroups();
+  if (rotationGroups.length > 0) {
+    const forced = new Set();
+    for (const g of rotationGroups) {
+      if (!g.enabled) continue;
+      const status = _computeGroupStatus(g, nowM);
+      if (status.mode === 'play' && status.playlist) {
+        forced.add(status.playlist);
+      }
+    }
+    if (forced.size > 0) {
+      const notBlocked = [...forced].filter(p => !blockedNames.some(b => p === b || p.startsWith(b + '/')));
+      if (notBlocked.length > 0) {
+        return { mode: 'priority', playlists: notBlocked, blocked: blockedNames };
+      }
     }
   }
 
@@ -822,7 +949,8 @@ module.exports = {
   getLiveStreams, addLiveStream, deleteLiveStream,
   setPlaylistAcknowledgement, isPlaylistAcknowledged,
   renamePlaylist, renameVideo,
-  getRotationConfig, setRotationConfig, setRotationEnabled, restartRotationCycle, getRotationStatus
+  getRotationGroups, createRotationGroup, renameRotationGroup, deleteRotationGroup,
+  setGroupSteps, setGroupEnabled, restartGroupCycle, setStepMandatory, getAllGroupStatuses
 };
 
 // --- Live Streams ---
