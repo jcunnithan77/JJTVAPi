@@ -61,6 +61,9 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN req_ack INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN min_repeat INTEGER DEFAULT 1`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN max_repeat INTEGER DEFAULT 3`); } catch(e) {}
+  // The time-window scheduler (start_time/end_time/lock_message/lock_audio) was retired
+  // in favor of Rotation; clear any leftover values so they can't silently restrict playback.
+  try { await db.exec(`UPDATE schedules SET start_time = NULL, end_time = NULL, lock_message = NULL, lock_audio = NULL`); } catch(e) {}
   try { await db.exec(`ALTER TABLE daily_playlist_progress ADD COLUMN watched_duration INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE media_cache ADD COLUMN file_created_at INTEGER DEFAULT 0`); } catch(e) {}
 
@@ -164,12 +167,14 @@ async function getSchedule(playlist) {
   return await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
-async function upsertSchedule(playlist, startTime, endTime, lockMessage, lockAudio, priority, minDuration, watchLimit, mandatoryView, isBlocked, reqAck, minRepeat, maxRepeat) {
+async function upsertSchedule(playlist, priority, minDuration, watchLimit, mandatoryView, isBlocked, reqAck, minRepeat, maxRepeat) {
   const db = await getDb();
+  // start_time/end_time/lock_message/lock_audio are legacy columns from the
+  // retired time-window scheduler; left NULL going forward (superseded by Rotation).
   await db.run(
-    `INSERT OR REPLACE INTO schedules (playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat) 
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-    [playlist, startTime, endTime, lockMessage || '', lockAudio || '', priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0, isBlocked || 0, reqAck || 0, minRepeat || 1, maxRepeat || 3]
+    `INSERT OR REPLACE INTO schedules (playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [playlist, priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0, isBlocked || 0, reqAck || 0, minRepeat || 1, maxRepeat || 3]
   );
 }
 
@@ -498,16 +503,14 @@ async function getPlaylistsForDisplay() {
   const nowM = now.getHours() * 60 + now.getMinutes();
 
   const schedules = await db.all(`SELECT * FROM schedules`);
-  
-  // Inject cached playlists that aren't in schedules yet, so they act as timeless defaults
+
+  // Inject cached playlists that aren't in schedules yet, so they act as defaults
   const cachedNames = await db.all(`SELECT playlist FROM media_cache GROUP BY playlist`);
   const scheduledNamesSet = new Set(schedules.map(s => s.playlist));
   for (const c of cachedNames) {
     if (c.playlist && !scheduledNamesSet.has(c.playlist)) {
       schedules.push({
         playlist: c.playlist,
-        start_time: '',
-        end_time: '',
         is_blocked: 0,
         min_duration: 0
       });
@@ -564,60 +567,26 @@ async function getPlaylistsForDisplay() {
     }
   }
 
-  const activeTimed = [];
-  const activeTimeless = [];
-  const scheduledNames = new Set();
-  const strictTimedNames = new Set();
+  const activePlaylists = [];
   const minDurationMap = {};
 
   for (const s of schedules) {
     if (s.is_blocked === 1) continue; // Skip entirely for normal scheduling
-    
-    scheduledNames.add(s.playlist);
+    activePlaylists.push(s.playlist);
     minDurationMap[s.playlist] = s.min_duration || 0;
-    
-    let isTimed = false;
-    let inWindow = false;
-
-    if (s.start_time && s.start_time !== '' && s.end_time && s.end_time !== '') {
-      isTimed = true;
-      const startM = _parseMins(s.start_time);
-      const endM   = _parseMins(s.end_time);
-      inWindow = startM < endM
-        ? (nowM >= startM && nowM <= endM)
-        : (nowM >= startM || nowM <= endM);
-      
-      // Only hide the playlist in fallback mode if we are OUTSIDE its allowed window
-      if (!inWindow) {
-        strictTimedNames.add(s.playlist);
-      }
-    } else {
-      // No time defined, always active
-      inWindow = true; 
-    }
-    
-    if (inWindow) {
-      if (isTimed) {
-        activeTimed.push(s.playlist);
-      } else {
-        activeTimeless.push(s.playlist);
-      }
-    }
   }
 
-  const allActive = [...activeTimed, ...activeTimeless];
-  
-  if (allActive.length === 0) {
-    return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames, blocked: blockedNames };
+  if (activePlaylists.length === 0) {
+    return { mode: 'fallback', playlists: null, blocked: blockedNames };
   }
 
   const completionRows = await db.all(
     `SELECT playlist, completed, watched_duration FROM daily_playlist_progress WHERE date = ?`,
     [today]
   );
-  
+
   const completedSet = new Set();
-  for (const scheduledPlaylist of allActive) {
+  for (const scheduledPlaylist of activePlaylists) {
     const minDur = minDurationMap[scheduledPlaylist];
     let totalWatched = 0;
     let anyCompleted = false;
@@ -638,28 +607,16 @@ async function getPlaylistsForDisplay() {
     }
   }
 
-  const pendingTimed = activeTimed.filter(p => !completedSet.has(p));
-  const pendingTimeless = activeTimeless.filter(p => !completedSet.has(p));
+  const pending = activePlaylists.filter(p => !completedSet.has(p));
 
-  // 1. If any timed schedule is pending, show ALL pending timed playlists
-  if (pendingTimed.length > 0) {
-    return { mode: 'priority', playlists: pendingTimed, blocked: blockedNames };
-  }
-  
-  // 2. If any timeless mandatory schedule is pending, show ALL of them
-  if (pendingTimeless.length > 0) {
-    // Separate mandatory (has min_duration or mandatory_view) from regular timeless
-    const pendingMandatory = pendingTimeless.filter(p => (minDurationMap[p] || 0) > 0);
-    if (pendingMandatory.length > 0) {
-      // Show ONLY mandatory playlists until they are done
-      return { mode: 'priority', playlists: pendingMandatory, blocked: blockedNames };
-    }
-    // All pending timeless are regular (no min_duration), show all content
-    return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames, blocked: blockedNames };
+  // If any mandatory (min_duration) schedule is pending, show ONLY those until done
+  const pendingMandatory = pending.filter(p => (minDurationMap[p] || 0) > 0);
+  if (pendingMandatory.length > 0) {
+    return { mode: 'priority', playlists: pendingMandatory, blocked: blockedNames };
   }
 
-  // 3. All mandatory playlists are completed - show all content
-  return { mode: 'fallback', playlists: null, excludeScheduled: strictTimedNames, blocked: blockedNames };
+  // No mandatory quotas pending - show all content (still respecting blocks)
+  return { mode: 'fallback', playlists: null, blocked: blockedNames };
 }
 
 async function isPlaylistAllowed(name) {
@@ -674,8 +631,10 @@ async function isPlaylistAllowed(name) {
     return result.playlists.some(p => name === p || name.startsWith(p + '/'));
   }
   if (result.mode === 'fallback') {
-    for (const ex of result.excludeScheduled) {
-      if (name === ex || name.startsWith(ex + '/')) return false;
+    if (result.excludeScheduled) {
+      for (const ex of result.excludeScheduled) {
+        if (name === ex || name.startsWith(ex + '/')) return false;
+      }
     }
     return true;
   }

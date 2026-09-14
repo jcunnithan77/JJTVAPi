@@ -60,11 +60,7 @@ router.get('/admin-api/schedules', async (req, res) => {
   const scheduleMap = {};
   const schedules = await db.getSchedules();
   for (const row of schedules) {
-    scheduleMap[row.playlist] = { 
-      start_time: row.start_time, 
-      end_time: row.end_time,
-      lock_message: row.lock_message || '',
-      lock_audio: row.lock_audio || '',
+    scheduleMap[row.playlist] = {
       priority: row.priority || 0,
       min_duration: row.min_duration || 0,
       watch_limit: row.watch_limit !== undefined ? row.watch_limit : 3,
@@ -81,7 +77,7 @@ router.get('/admin-api/schedules', async (req, res) => {
     const cached = await db.getCachedPlaylists();
     for (const p of cached) {
       if (!scheduleMap[p.name]) {
-        scheduleMap[p.name] = { start_time: '', end_time: '', lock_message: '', lock_audio: '', priority: 0, min_duration: 0, watch_limit: 3, mandatory_view: 0, is_blocked: 0, req_ack: 0, min_repeat: 1, max_repeat: 3 };
+        scheduleMap[p.name] = { priority: 0, min_duration: 0, watch_limit: 3, mandatory_view: 0, is_blocked: 0, req_ack: 0, min_repeat: 1, max_repeat: 3 };
       }
     }
   } catch { /* ignore */ }
@@ -90,13 +86,9 @@ router.get('/admin-api/schedules', async (req, res) => {
 });
 
 router.post('/admin-api/schedules', async (req, res) => {
-  const { playlist, start_time, end_time, lock_message, lock_audio, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat } = req.body || {};
+  const { playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat } = req.body || {};
   await db.upsertSchedule(
-    playlist, 
-    start_time || '', 
-    end_time || '', 
-    lock_message || '', 
-    lock_audio || '', 
+    playlist,
     parseInt(priority || 0),
     parseInt(min_duration || 0),
     parseInt(watch_limit !== undefined ? watch_limit : 3),
