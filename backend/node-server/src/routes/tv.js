@@ -114,6 +114,43 @@ router.get('/api/status', async (req, res) => {
   }
 });
 
+// --- Browser Links (kiosk-mode web browsing, admin-curated with an approval queue) ---
+
+router.get('/api/browser-links', async (req, res) => {
+  if (await db.isSystemAsleep()) return res.json([]);
+  try {
+    const links = await db.getBrowserLinks();
+    res.json(links.map(l => ({ id: l.id, name: l.name, url: l.url, thumbnail: l.thumbnail })));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Called before following ANY navigation inside the browser view (including the
+// link's own starting URL) - returns {allowed:true} if the target's domain is
+// approved, otherwise files (or reuses) a pending admin-approval request.
+router.post('/api/browser-links/:id/navigate', async (req, res) => {
+  if (await db.isSystemAsleep()) return res.status(403).json({ error: 'Forbidden' });
+  const { url } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  try {
+    const result = await db.checkOrRequestApproval(parseInt(req.params.id), url);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Poll target for the app to auto-resume once an admin approves (or denies) a request.
+router.get('/api/browser-links/:id/approval/:requestId', async (req, res) => {
+  try {
+    const status = await db.getApprovalStatus(parseInt(req.params.requestId));
+    res.json(status);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/api/playlists', async (req, res) => {
   console.log(`[TV-API] GET /api/playlists from ${req.ip}`);
   if (await db.isSystemAsleep()) return res.json([]);

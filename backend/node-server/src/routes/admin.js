@@ -167,10 +167,64 @@ router.post('/admin-api/rotation/groups/:id/restart', async (req, res) => {
   res.json({ success: true });
 });
 
+router.post('/admin-api/rotation/groups/:id/schedule', async (req, res) => {
+  const { day_mode, days } = req.body || {};
+  await db.setGroupSchedule(parseInt(req.params.id), day_mode, days);
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
 router.post('/admin-api/rotation/steps/:stepId/mandatory', async (req, res) => {
   const { mandatory } = req.body || {};
   await db.setStepMandatory(parseInt(req.params.stepId), !!mandatory);
   await triggerTvReload();
+  res.json({ success: true });
+});
+
+// --- Browser Links (kiosk-mode web browsing, admin-curated with an approval queue) ---
+
+router.get('/admin-api/browser-links', async (req, res) => {
+  res.json(await db.getBrowserLinks());
+});
+
+router.post('/admin-api/browser-links', async (req, res) => {
+  const { name, url, thumbnail } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  if (!url || !url.trim()) return res.status(400).json({ error: 'url is required' });
+  try {
+    const id = await db.createBrowserLink(name.trim(), url.trim(), thumbnail || '');
+    await triggerTvReload();
+    res.json({ success: true, id });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.delete('/admin-api/browser-links/:id', async (req, res) => {
+  await db.deleteBrowserLink(parseInt(req.params.id));
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
+router.get('/admin-api/browser-links/:id', async (req, res) => {
+  const link = await db.getBrowserLink(parseInt(req.params.id));
+  if (!link) return res.status(404).json({ error: 'Not found' });
+  res.json(link);
+});
+
+router.get('/admin-api/browser-approvals', async (req, res) => {
+  res.json(await db.getPendingApprovals());
+});
+
+router.post('/admin-api/browser-approvals/:id/approve', async (req, res) => {
+  const ok = await db.resolveApproval(parseInt(req.params.id), true);
+  if (!ok) return res.status(404).json({ error: 'Not found' });
+  res.json({ success: true });
+});
+
+router.post('/admin-api/browser-approvals/:id/deny', async (req, res) => {
+  const ok = await db.resolveApproval(parseInt(req.params.id), false);
+  if (!ok) return res.status(404).json({ error: 'Not found' });
   res.json({ success: true });
 });
 

@@ -30,12 +30,39 @@ async function initDb() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS overlay_config (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS browser_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      thumbnail TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS browser_approved_domains (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      link_id INTEGER NOT NULL,
+      domain TEXT NOT NULL,
+      approved_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(link_id, domain)
+    );
+    CREATE TABLE IF NOT EXISTS browser_approval_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      link_id INTEGER NOT NULL,
+      requested_url TEXT NOT NULL,
+      requested_domain TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      resolved_at TEXT
+    );
     CREATE TABLE IF NOT EXISTS rotation_groups (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       enabled INTEGER DEFAULT 0,
       started_at INTEGER DEFAULT 0,
-      sort_order INTEGER DEFAULT 0
+      sort_order INTEGER DEFAULT 0,
+      day_mode TEXT DEFAULT 'all',
+      days TEXT DEFAULT '[]',
+      today_date TEXT
     );
     CREATE TABLE IF NOT EXISTS rotation_steps (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,6 +111,9 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN start_time TEXT`); } catch(e) {}
   try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN end_time TEXT`); } catch(e) {}
   try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN mandatory INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN day_mode TEXT DEFAULT 'all'`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN days TEXT DEFAULT '[]'`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN today_date TEXT`); } catch(e) {}
   try {
     // One-time migration: wrap any pre-existing flat (ungrouped) rotation steps,
     // plus the old global rotation_enabled/rotation_started_at settings, into a "Default" group.
@@ -228,12 +258,39 @@ function _inClockWindow(startTime, endTime, nowM) {
   return startM < endM ? (nowM >= startM && nowM <= endM) : (nowM >= startM || nowM <= endM);
 }
 
+// True if `group` is in its day-scope today: 'all' (always), 'specific' (today's
+// weekday is in its days list), or 'today' (a self-expiring one-off - only true on
+// the exact calendar date it was set, in the configured timezone).
+function _isGroupActiveToday(group, now) {
+  const mode = group.day_mode || 'all';
+  if (mode === 'today') {
+    return group.today_date === _dateStr(now);
+  }
+  if (mode === 'specific') {
+    const days = group.days || [];
+    return days.includes(now.getDay()); // 0=Sun .. 6=Sat
+  }
+  return true; // 'all'
+}
+
+function _dateStr(now) {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 // Pure computation of a single group's current state — no DB access, so it can be
 // reused for both the live scheduling decision and the admin status display without
-// re-querying. `nowM` = minutes since local midnight, for each step's optional time window.
-function _computeGroupStatus(group, nowM) {
+// re-querying. `now` = current Date (configured timezone); `nowM` = minutes since
+// local midnight, for each step's optional time window.
+function _computeGroupStatus(group, now, nowM) {
   const steps = group.steps || [];
-  const base = { groupId: group.id, name: group.name, enabled: group.enabled, steps };
+  const base = { groupId: group.id, name: group.name, enabled: group.enabled, steps, dayMode: group.day_mode || 'all', days: group.days || [], todayDate: group.today_date || null };
+
+  if (!_isGroupActiveToday(group, now)) {
+    return { ...base, mode: 'off', reason: 'wrong-day' };
+  }
 
   if (!group.enabled || steps.length === 0) {
     return { ...base, mode: 'off' };
@@ -294,8 +351,41 @@ async function getRotationGroups() {
     name: g.name,
     enabled: g.enabled === 1,
     started_at: g.started_at || 0,
+    day_mode: g.day_mode || 'all',
+    days: _parseDays(g.days),
+    today_date: g.today_date || null,
     steps: steps.filter(s => s.group_id === g.id)
   }));
+}
+
+function _parseDays(raw) {
+  try {
+    const arr = JSON.parse(raw || '[]');
+    return Array.isArray(arr) ? arr.filter(n => Number.isInteger(n) && n >= 0 && n <= 6) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// Sets a group's day-of-week scope. mode: 'all' (always active), 'specific' (only on
+// the given weekdays, 0=Sun..6=Sat), or 'today' (a self-expiring one-off for the
+// current calendar date - naturally stops applying once the date moves on).
+async function setGroupSchedule(groupId, dayMode, days) {
+  const db = await getDb();
+  const mode = ['all', 'specific', 'today'].includes(dayMode) ? dayMode : 'all';
+  let daysJson = '[]';
+  let todayDate = null;
+  if (mode === 'specific') {
+    const clean = Array.isArray(days) ? [...new Set(days.map(n => parseInt(n)).filter(n => Number.isInteger(n) && n >= 0 && n <= 6))] : [];
+    daysJson = JSON.stringify(clean);
+  } else if (mode === 'today') {
+    const now = await getNowInConfiguredTimezone();
+    todayDate = _dateStr(now);
+  }
+  await db.run(
+    `UPDATE rotation_groups SET day_mode = ?, days = ?, today_date = ? WHERE id = ?`,
+    [mode, daysJson, todayDate, groupId]
+  );
 }
 
 async function createRotationGroup(name) {
@@ -386,7 +476,119 @@ async function getAllGroupStatuses() {
   const groups = await getRotationGroups();
   const now = await getNowInConfiguredTimezone();
   const nowM = now.getHours() * 60 + now.getMinutes();
-  return groups.map(g => _computeGroupStatus(g, nowM));
+  return groups.map(g => _computeGroupStatus(g, now, nowM));
+}
+
+// --- Browser Links (admin-curated kiosk-mode web links, with a per-link ---
+// --- domain allowlist and an admin-approval queue for anything outside it) ---
+
+function _normalizeDomain(hostname) {
+  return (hostname || '').toLowerCase().replace(/^www\./, '');
+}
+
+function _domainOf(url) {
+  try {
+    return _normalizeDomain(new URL(url).hostname);
+  } catch (e) {
+    return '';
+  }
+}
+
+async function getBrowserLinks() {
+  const db = await getDb();
+  return await db.all(`SELECT * FROM browser_links ORDER BY id ASC`);
+}
+
+async function getBrowserLink(linkId) {
+  const db = await getDb();
+  const link = await db.get(`SELECT * FROM browser_links WHERE id = ?`, [linkId]);
+  if (!link) return null;
+  const domains = await db.all(`SELECT domain FROM browser_approved_domains WHERE link_id = ?`, [linkId]);
+  return { ...link, approvedDomains: domains.map(d => d.domain) };
+}
+
+async function createBrowserLink(name, url, thumbnail) {
+  const db = await getDb();
+  const domain = _domainOf(url);
+  if (!domain) throw new Error('Invalid URL');
+  const result = await db.run(
+    `INSERT INTO browser_links (name, url, domain, thumbnail) VALUES (?, ?, ?, ?)`,
+    [name, url, domain, thumbnail || null]
+  );
+  await db.run(
+    `INSERT OR IGNORE INTO browser_approved_domains (link_id, domain) VALUES (?, ?)`,
+    [result.lastID, domain]
+  );
+  return result.lastID;
+}
+
+async function deleteBrowserLink(linkId) {
+  const db = await getDb();
+  await db.run(`DELETE FROM browser_approved_domains WHERE link_id = ?`, [linkId]);
+  await db.run(`DELETE FROM browser_approval_requests WHERE link_id = ?`, [linkId]);
+  await db.run(`DELETE FROM browser_links WHERE id = ?`, [linkId]);
+}
+
+// Checks whether `url` is already allowed for this link; if not, files (or reuses) a
+// pending approval request for an admin to review. Auto-resume relies on the caller
+// polling getApprovalStatus() with the returned requestId once denied/pending.
+async function checkOrRequestApproval(linkId, url) {
+  const db = await getDb();
+  const domain = _domainOf(url);
+  if (!domain) return { allowed: false, error: 'Invalid URL' };
+
+  const approved = await db.get(
+    `SELECT 1 FROM browser_approved_domains WHERE link_id = ? AND domain = ?`,
+    [linkId, domain]
+  );
+  if (approved) return { allowed: true };
+
+  const existing = await db.get(
+    `SELECT id FROM browser_approval_requests WHERE link_id = ? AND requested_domain = ? AND status = 'pending'`,
+    [linkId, domain]
+  );
+  if (existing) return { allowed: false, requestId: existing.id };
+
+  const result = await db.run(
+    `INSERT INTO browser_approval_requests (link_id, requested_url, requested_domain) VALUES (?, ?, ?)`,
+    [linkId, url, domain]
+  );
+  return { allowed: false, requestId: result.lastID };
+}
+
+async function getApprovalStatus(requestId) {
+  const db = await getDb();
+  const row = await db.get(`SELECT * FROM browser_approval_requests WHERE id = ?`, [requestId]);
+  if (!row) return { status: 'not_found' };
+  return { status: row.status, requestedUrl: row.requested_url, requestedDomain: row.requested_domain };
+}
+
+async function getPendingApprovals() {
+  const db = await getDb();
+  return await db.all(`
+    SELECT r.*, l.name AS link_name
+    FROM browser_approval_requests r
+    JOIN browser_links l ON l.id = r.link_id
+    WHERE r.status = 'pending'
+    ORDER BY r.created_at ASC
+  `);
+}
+
+async function resolveApproval(requestId, approve) {
+  const db = await getDb();
+  const row = await db.get(`SELECT * FROM browser_approval_requests WHERE id = ?`, [requestId]);
+  if (!row) return false;
+  await db.run(
+    `UPDATE browser_approval_requests SET status = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [approve ? 'approved' : 'denied', requestId]
+  );
+  if (approve) {
+    await db.run(
+      `INSERT OR IGNORE INTO browser_approved_domains (link_id, domain) VALUES (?, ?)`,
+      [row.link_id, row.requested_domain]
+    );
+  }
+  return true;
 }
 
 async function getScheduledDownloads() {
@@ -681,7 +883,7 @@ async function getPlaylistsForDisplay() {
     const forced = new Set();
     for (const g of rotationGroups) {
       if (!g.enabled) continue;
-      const status = _computeGroupStatus(g, nowM);
+      const status = _computeGroupStatus(g, now, nowM);
       if (status.mode === 'play' && status.playlist) {
         forced.add(status.playlist);
       }
@@ -950,7 +1152,10 @@ module.exports = {
   setPlaylistAcknowledgement, isPlaylistAcknowledged,
   renamePlaylist, renameVideo,
   getRotationGroups, createRotationGroup, renameRotationGroup, deleteRotationGroup,
-  setGroupSteps, setGroupEnabled, restartGroupCycle, setStepMandatory, getAllGroupStatuses
+  setGroupSteps, setGroupEnabled, restartGroupCycle, setStepMandatory, getAllGroupStatuses,
+  setGroupSchedule,
+  getBrowserLinks, getBrowserLink, createBrowserLink, deleteBrowserLink,
+  checkOrRequestApproval, getApprovalStatus, getPendingApprovals, resolveApproval
 };
 
 // --- Live Streams ---
