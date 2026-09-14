@@ -36,6 +36,7 @@ async function initDb() {
       url TEXT NOT NULL,
       domain TEXT NOT NULL,
       thumbnail TEXT,
+      group_name TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS browser_approved_domains (
@@ -114,6 +115,7 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN day_mode TEXT DEFAULT 'all'`); } catch(e) {}
   try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN days TEXT DEFAULT '[]'`); } catch(e) {}
   try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN today_date TEXT`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE browser_links ADD COLUMN group_name TEXT`); } catch(e) {}
   try {
     // One-time migration: wrap any pre-existing flat (ungrouped) rotation steps,
     // plus the old global rotation_enabled/rotation_started_at settings, into a "Default" group.
@@ -507,13 +509,13 @@ async function getBrowserLink(linkId) {
   return { ...link, approvedDomains: domains.map(d => d.domain) };
 }
 
-async function createBrowserLink(name, url, thumbnail) {
+async function createBrowserLink(name, url, thumbnail, groupName) {
   const db = await getDb();
   const domain = _domainOf(url);
   if (!domain) throw new Error('Invalid URL');
   const result = await db.run(
-    `INSERT INTO browser_links (name, url, domain, thumbnail) VALUES (?, ?, ?, ?)`,
-    [name, url, domain, thumbnail || null]
+    `INSERT INTO browser_links (name, url, domain, thumbnail, group_name) VALUES (?, ?, ?, ?, ?)`,
+    [name, url, domain, thumbnail || null, groupName || null]
   );
   await db.run(
     `INSERT OR IGNORE INTO browser_approved_domains (link_id, domain) VALUES (?, ?)`,

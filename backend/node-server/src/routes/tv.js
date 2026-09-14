@@ -120,7 +120,21 @@ router.get('/api/browser-links', async (req, res) => {
   if (await db.isSystemAsleep()) return res.json([]);
   try {
     const links = await db.getBrowserLinks();
-    res.json(links.map(l => ({ id: l.id, name: l.name, url: l.url, thumbnail: l.thumbnail })));
+    res.json(links.map(l => ({ id: l.id, name: l.name, url: l.url, thumbnail: l.thumbnail, group_name: l.group_name })));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Single link detail, including its currently-approved domains - the app fetches this
+// once when opening the browser screen so the starting page never has to wait on a
+// navigation-check round trip.
+router.get('/api/browser-links/:id', async (req, res) => {
+  if (await db.isSystemAsleep()) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const link = await db.getBrowserLink(parseInt(req.params.id));
+    if (!link) return res.status(404).json({ error: 'Not found' });
+    res.json({ id: link.id, name: link.name, url: link.url, thumbnail: link.thumbnail, approvedDomains: link.approvedDomains });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

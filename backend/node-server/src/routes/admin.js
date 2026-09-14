@@ -188,11 +188,11 @@ router.get('/admin-api/browser-links', async (req, res) => {
 });
 
 router.post('/admin-api/browser-links', async (req, res) => {
-  const { name, url, thumbnail } = req.body || {};
+  const { name, url, thumbnail, group_name } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
   if (!url || !url.trim()) return res.status(400).json({ error: 'url is required' });
   try {
-    const id = await db.createBrowserLink(name.trim(), url.trim(), thumbnail || '');
+    const id = await db.createBrowserLink(name.trim(), url.trim(), thumbnail || '', (group_name || '').trim() || null);
     await triggerTvReload();
     res.json({ success: true, id });
   } catch (e) {
