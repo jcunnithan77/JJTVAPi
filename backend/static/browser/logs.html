@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JJtv Live Logs</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --terminal-bg: #1e293b;
+            --text-color: #f8fafc;
+            --accent-color: #38bdf8;
+            --error-color: #f43f5e;
+            --warning-color: #fbbf24;
+            --success-color: #4ade80;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            padding: 1.5rem 2rem;
+            background: rgba(30, 41, 59, 0.5);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .status-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            background: var(--success-color);
+            color: #000;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+        }
+
+        button {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        #log-container {
+            flex: 1;
+            background: var(--terminal-bg);
+            margin: 1.5rem;
+            border-radius: 12px;
+            padding: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            overflow-y: auto;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .log-line {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .log-line:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .log-time { color: #64748b; margin-right: 0.75rem; }
+        .log-error { color: var(--error-color); background: rgba(244, 63, 94, 0.1); }
+        .log-warning { color: var(--warning-color); }
+        .log-success { color: var(--success-color); }
+        .log-info { color: var(--accent-color); }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>
+            <span style="color: var(--accent-color)">JJtv</span> Live Console
+            <span class="status-badge" id="status">Live</span>
+        </h1>
+        <div class="controls">
+            <button onclick="clearLogs()">Clear Console</button>
+            <button onclick="toggleScroll()" id="scroll-btn">Auto-scroll: ON</button>
+        </div>
+    </header>
+
+    <div id="log-container"></div>
+
+    <script>
+        const container = document.getElementById('log-container');
+        const statusBadge = document.getElementById('status');
+        let autoScroll = true;
+
+        function toggleScroll() {
+            autoScroll = !autoScroll;
+            document.getElementById('scroll-btn').innerText = `Auto-scroll: ${autoScroll ? 'ON' : 'OFF'}`;
+        }
+
+        function clearLogs() {
+            container.innerHTML = '';
+        }
+
+        function addLog(msg) {
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            
+            // Basic color coding
+            if (msg.includes('ERROR') || msg.includes('Fatal')) div.classList.add('log-error');
+            else if (msg.includes('WARNING')) div.classList.add('log-warning');
+            else if (msg.includes('success') || msg.includes('complete')) div.classList.add('log-success');
+            else if (msg.includes('[Config]') || msg.includes('[DB]')) div.classList.add('log-info');
+
+            // Format timestamp if present
+            const timeMatch = msg.match(/^\[(.*?)\]/);
+            if (timeMatch) {
+                const time = timeMatch[1];
+                const rest = msg.replace(`[${time}] `, '');
+                div.innerHTML = `<span class="log-time">[${time}]</span>${escapeHtml(rest)}`;
+            } else {
+                div.textContent = msg;
+            }
+
+            container.appendChild(div);
+            if (autoScroll) {
+                container.scrollTop = container.scrollHeight;
+            }
+
+            // Keep only last 1000 lines in UI
+            if (container.children.length > 1000) {
+                container.removeChild(container.firstChild);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function connect() {
+            const ev = new EventSource('/admin-api/logs/stream');
+            
+            ev.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                addLog(data.message);
+            };
+
+            ev.onopen = () => {
+                statusBadge.style.background = 'var(--success-color)';
+                statusBadge.innerText = 'Live';
+            };
+
+            ev.onerror = () => {
+                statusBadge.style.background = 'var(--error-color)';
+                statusBadge.innerText = 'Disconnected';
+                setTimeout(connect, 3000); // Retry
+            };
+        }
+
+        connect();
+    </script>
+</body>
+</html>
