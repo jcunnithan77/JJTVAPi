@@ -1,12 +1,13 @@
-[9:57:40 PM] ERROR: [Config] Failed to create MEDIA_PATH E:/Blippi/downloads. Falling back to default. Error: ENOENT: no such file or directory, mkdir 'E:\Blippi\downloads'
-[9:57:41 PM] [Config] Media Path: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[9:57:41 PM] [DB] Initialized.
-[9:57:41 PM] [Scheduler] Started — checking every minute for scheduled downloads.
-[9:57:41 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
-[9:57:41 PM] 
+[9:28:45 PM] ERROR: [Config] Failed to create MEDIA_PATH E:/Blippi/downloads. Falling back to default. Error: ENOENT: no such file or directory, mkdir 'E:\Blippi\downloads'
+[9:28:45 PM] [Config] Media Path: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
+[9:28:45 PM] [DB] Initialized.
+[9:28:45 PM] [Scheduler] Started — checking every minute for scheduled downloads.
+[9:28:45 PM] [RotationWatcher] Started — checking every 20s for schedule/rotation transitions.
+[9:28:45 PM] [Scanner] Starting full disk scan in: D:\JC\Personal\projects\TvApp-JJtv\JJTVAPI\backend\videos
+[9:28:45 PM] 
 🚀 JJtv Server (Node.js) is running on:
-[9:57:41 PM]    - Local:  http://localhost:5056
-[9:57:41 PM]    - Network: http://0.0.0.0:5056
+[9:28:45 PM]    - Local:  http://localhost:5059
+[9:28:45 PM]    - Network: http://0.0.0.0:5059
 
-[9:57:41 PM] Press Ctrl+C to stop.
-[9:57:41 PM] [Scanner] Full scan complete.
+[9:28:45 PM] Press Ctrl+C to stop.
+[9:28:45 PM] [Scanner] Full scan complete.

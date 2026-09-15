@@ -111,9 +111,15 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN req_ack INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN min_repeat INTEGER DEFAULT 1`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN max_repeat INTEGER DEFAULT 3`); } catch(e) {}
-  // The time-window scheduler (start_time/end_time/lock_message/lock_audio) was retired
-  // in favor of Rotation; clear any leftover values so they can't silently restrict playback.
-  try { await db.exec(`UPDATE schedules SET start_time = NULL, end_time = NULL, lock_message = NULL, lock_audio = NULL`); } catch(e) {}
+  // lock_message/lock_audio (from a much older locked-screen concept) are unused and have
+  // no UI - clear any leftover values so they can't do anything surprising.
+  try { await db.exec(`UPDATE schedules SET lock_message = NULL, lock_audio = NULL`); } catch(e) {}
+  // Per-playlist schedule: an active clock-time window (start_time/end_time, reused from the
+  // original scheduler) during which the playlist repeatedly cycles play/pause using these two
+  // durations. Only takes effect when cycle_play_minutes > 0 - otherwise this playlist is
+  // unaffected and start_time/end_time are ignored, exactly like before this feature existed.
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN cycle_play_minutes INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN cycle_pause_minutes INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE daily_playlist_progress ADD COLUMN watched_duration INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE media_cache ADD COLUMN file_created_at INTEGER DEFAULT 0`); } catch(e) {}
 
@@ -251,14 +257,22 @@ async function getSchedule(playlist) {
   return await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
-async function upsertSchedule(playlist, priority, minDuration, watchLimit, mandatoryView, isBlocked, reqAck, minRepeat, maxRepeat) {
+async function upsertSchedule(playlist, priority, minDuration, watchLimit, mandatoryView, isBlocked, reqAck, minRepeat, maxRepeat, startTime, endTime, cyclePlayMinutes, cyclePauseMinutes) {
   const db = await getDb();
-  // start_time/end_time/lock_message/lock_audio are legacy columns from the
-  // retired time-window scheduler; left NULL going forward (superseded by Rotation).
+  // A play/pause cycle only takes effect when both a window and cyclePlayMinutes are set;
+  // otherwise this playlist behaves exactly as if the feature didn't exist.
+  const hasWindow = !!(startTime && endTime);
+  const hasCycle = hasWindow && cyclePlayMinutes > 0;
   await db.run(
-    `INSERT OR REPLACE INTO schedules (playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [playlist, priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0, isBlocked || 0, reqAck || 0, minRepeat || 1, maxRepeat || 3]
+    `INSERT OR REPLACE INTO schedules (playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat, start_time, end_time, cycle_play_minutes, cycle_pause_minutes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      playlist, priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0, isBlocked || 0, reqAck || 0, minRepeat || 1, maxRepeat || 3,
+      hasWindow ? startTime : null,
+      hasWindow ? endTime : null,
+      hasCycle ? cyclePlayMinutes : 0,
+      hasCycle ? (cyclePauseMinutes || 0) : 0
+    ]
   );
 }
 
@@ -965,12 +979,14 @@ async function getPlaylistsForDisplay() {
     }
   }
 
-  // Rotation: every enabled group runs its own ordered play/pause cycle independently.
-  // Whatever playlist any enabled group currently wants "on" becomes forced (union across
-  // groups); if no enabled group currently wants anything on, fall through to normal scheduling.
+  // Two independent sources can force a playlist "on": Rotation Groups (each running its
+  // own ordered play/pause cycle) and a playlist's own scheduled window+cycle (set directly
+  // on the playlist in Media Manager). Whatever any of them currently wants on is unioned
+  // together; if nothing does, fall through to normal scheduling below.
+  const forced = new Set();
+
   const rotationGroups = await getRotationGroups();
   if (rotationGroups.length > 0) {
-    const forced = new Set();
     const groupPlaylistsById = await _playlistGroupLookup();
     for (const g of rotationGroups) {
       if (!g.enabled) continue;
@@ -979,11 +995,32 @@ async function getPlaylistsForDisplay() {
         for (const p of (status.playlists || [])) forced.add(p);
       }
     }
-    if (forced.size > 0) {
-      const notBlocked = [...forced].filter(p => !blockedNames.some(b => p === b || p.startsWith(b + '/')));
-      if (notBlocked.length > 0) {
-        return { mode: 'priority', playlists: notBlocked, blocked: blockedNames };
-      }
+  }
+
+  // Per-playlist scheduled window+cycle: only playlists with cycle_play_minutes > 0 (set via
+  // the schedule form) participate - everything else is completely unaffected by this.
+  for (const s of schedules) {
+    if (s.is_blocked === 1) continue;
+    if (!s.cycle_play_minutes || s.cycle_play_minutes <= 0) continue;
+    if (!s.start_time || !s.end_time) continue;
+    if (!_inClockWindow(s.start_time, s.end_time, nowM)) continue;
+
+    const startM = _parseMins(s.start_time);
+    let minutesSinceStart = nowM - startM;
+    if (minutesSinceStart < 0) minutesSinceStart += 1440; // window wraps past midnight
+    const cycleLen = s.cycle_play_minutes + (s.cycle_pause_minutes || 0);
+    const posInCycle = cycleLen > 0 ? (minutesSinceStart % cycleLen) : 0;
+    if (posInCycle < s.cycle_play_minutes) {
+      forced.add(s.playlist);
+    }
+    // else: currently in this playlist's own pause phase - contributes nothing, same as a
+    // Rotation pause step (falls through to whatever else is allowed below).
+  }
+
+  if (forced.size > 0) {
+    const notBlocked = [...forced].filter(p => !blockedNames.some(b => p === b || p.startsWith(b + '/')));
+    if (notBlocked.length > 0) {
+      return { mode: 'priority', playlists: notBlocked, blocked: blockedNames };
     }
   }
 

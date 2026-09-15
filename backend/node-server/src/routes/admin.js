@@ -68,16 +68,20 @@ router.get('/admin-api/schedules', async (req, res) => {
       is_blocked: row.is_blocked || 0,
       req_ack: row.req_ack || 0,
       min_repeat: row.min_repeat || 1,
-      max_repeat: row.max_repeat !== undefined ? row.max_repeat : 3
+      max_repeat: row.max_repeat !== undefined ? row.max_repeat : 3,
+      start_time: row.start_time || '',
+      end_time: row.end_time || '',
+      cycle_play_minutes: row.cycle_play_minutes || 0,
+      cycle_pause_minutes: row.cycle_pause_minutes || 0
     };
   }
-  
+
   // Ensure all known playlists from the media cache are in the schedule map with default values
   try {
     const cached = await db.getCachedPlaylists();
     for (const p of cached) {
       if (!scheduleMap[p.name]) {
-        scheduleMap[p.name] = { priority: 0, min_duration: 0, watch_limit: 3, mandatory_view: 0, is_blocked: 0, req_ack: 0, min_repeat: 1, max_repeat: 3 };
+        scheduleMap[p.name] = { priority: 0, min_duration: 0, watch_limit: 3, mandatory_view: 0, is_blocked: 0, req_ack: 0, min_repeat: 1, max_repeat: 3, start_time: '', end_time: '', cycle_play_minutes: 0, cycle_pause_minutes: 0 };
       }
     }
   } catch { /* ignore */ }
@@ -86,7 +90,7 @@ router.get('/admin-api/schedules', async (req, res) => {
 });
 
 router.post('/admin-api/schedules', async (req, res) => {
-  const { playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat } = req.body || {};
+  const { playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat, start_time, end_time, cycle_play_minutes, cycle_pause_minutes } = req.body || {};
   await db.upsertSchedule(
     playlist,
     parseInt(priority || 0),
@@ -96,7 +100,11 @@ router.post('/admin-api/schedules', async (req, res) => {
     parseInt(is_blocked ? 1 : 0),
     parseInt(req_ack ? 1 : 0),
     parseInt(min_repeat || 1),
-    parseInt(max_repeat !== undefined ? max_repeat : 3)
+    parseInt(max_repeat !== undefined ? max_repeat : 3),
+    start_time || null,
+    end_time || null,
+    parseInt(cycle_play_minutes || 0),
+    parseInt(cycle_pause_minutes || 0)
   );
   await triggerTvReload();
   res.json({ success: true });
