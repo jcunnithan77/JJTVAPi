@@ -20,7 +20,7 @@ const { setupLogger } = require('./logger');
 setupLogger(); // Intercept console output for live streaming
 
 const db = require('./db');
-const { startScheduler } = require('./scheduler');
+const { startScheduler, startRotationWatcher } = require('./scheduler');
 const { startAutoScanner } = require('./scanner');
 const tvRoutes = require('./routes/tv');
 const adminRoutes = require('./routes/admin');
@@ -103,6 +103,7 @@ app.get('/admin/*', (req, res) => {
   try {
     await db.initDb();
     startScheduler(MEDIA_PATH);
+    startRotationWatcher();
     startAutoScanner(MEDIA_PATH);
 
     app.listen(PORT, '0.0.0.0', () => {

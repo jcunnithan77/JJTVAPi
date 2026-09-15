@@ -115,6 +115,40 @@ router.delete('/admin-api/schedules/:playlist(*)', async (req, res) => {
   res.json({ success: true });
 });
 
+// --- Playlist Groups (created in Media Manager; selectable as a single Rotation step target) ---
+
+router.get('/admin-api/playlist-groups', async (req, res) => {
+  res.json(await db.getPlaylistGroups());
+});
+
+router.post('/admin-api/playlist-groups', async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  const id = await db.createPlaylistGroup(name.trim());
+  res.json({ success: true, id });
+});
+
+router.post('/admin-api/playlist-groups/:id', async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  await db.renamePlaylistGroup(parseInt(req.params.id), name.trim());
+  res.json({ success: true });
+});
+
+router.delete('/admin-api/playlist-groups/:id', async (req, res) => {
+  await db.deletePlaylistGroup(parseInt(req.params.id));
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
+router.post('/admin-api/playlist-groups/:id/members', async (req, res) => {
+  const { playlists } = req.body || {};
+  if (!Array.isArray(playlists)) return res.status(400).json({ error: 'playlists array is required' });
+  await db.setPlaylistGroupMembers(parseInt(req.params.id), playlists);
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
 // --- Rotation (named groups of repeating play/pause cycles, each independently on/off) ---
 
 router.get('/admin-api/rotation/groups', async (req, res) => {
@@ -188,16 +222,23 @@ router.get('/admin-api/browser-links', async (req, res) => {
 });
 
 router.post('/admin-api/browser-links', async (req, res) => {
-  const { name, url, thumbnail, group_name } = req.body || {};
+  const { name, url, thumbnail, group_name, force_portrait } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
   if (!url || !url.trim()) return res.status(400).json({ error: 'url is required' });
   try {
-    const id = await db.createBrowserLink(name.trim(), url.trim(), thumbnail || '', (group_name || '').trim() || null);
+    const id = await db.createBrowserLink(name.trim(), url.trim(), thumbnail || '', (group_name || '').trim() || null, !!force_portrait);
     await triggerTvReload();
     res.json({ success: true, id });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
+});
+
+router.post('/admin-api/browser-links/:id/portrait', async (req, res) => {
+  const { force_portrait } = req.body || {};
+  await db.setBrowserLinkPortrait(parseInt(req.params.id), !!force_portrait);
+  await triggerTvReload();
+  res.json({ success: true });
 });
 
 router.delete('/admin-api/browser-links/:id', async (req, res) => {

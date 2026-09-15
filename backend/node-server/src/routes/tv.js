@@ -120,7 +120,7 @@ router.get('/api/browser-links', async (req, res) => {
   if (await db.isSystemAsleep()) return res.json([]);
   try {
     const links = await db.getBrowserLinks();
-    res.json(links.map(l => ({ id: l.id, name: l.name, url: l.url, thumbnail: l.thumbnail, group_name: l.group_name })));
+    res.json(links.map(l => ({ id: l.id, name: l.name, url: l.url, thumbnail: l.thumbnail, group_name: l.group_name, force_portrait: l.force_portrait === 1 })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -134,7 +134,7 @@ router.get('/api/browser-links/:id', async (req, res) => {
   try {
     const link = await db.getBrowserLink(parseInt(req.params.id));
     if (!link) return res.status(404).json({ error: 'Not found' });
-    res.json({ id: link.id, name: link.name, url: link.url, thumbnail: link.thumbnail, approvedDomains: link.approvedDomains });
+    res.json({ id: link.id, name: link.name, url: link.url, thumbnail: link.thumbnail, force_portrait: link.force_portrait === 1, approvedDomains: link.approvedDomains });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

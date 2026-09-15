@@ -30,6 +30,17 @@ async function initDb() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS overlay_config (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS playlist_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS playlist_group_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL,
+      playlist TEXT NOT NULL,
+      UNIQUE(group_id, playlist)
+    );
     CREATE TABLE IF NOT EXISTS browser_links (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -116,6 +127,13 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN days TEXT DEFAULT '[]'`); } catch(e) {}
   try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN today_date TEXT`); } catch(e) {}
   try { await db.exec(`ALTER TABLE browser_links ADD COLUMN group_name TEXT`); } catch(e) {}
+  // Some sites are mobile/portrait-only and render broken (or blank) on a landscape TV
+  // screen; when set, the app renders that link's WebView rotated 90° to compensate.
+  try { await db.exec(`ALTER TABLE browser_links ADD COLUMN force_portrait INTEGER DEFAULT 0`); } catch(e) {}
+  // A rotation step can target either a single playlist (default, unchanged) or a
+  // Playlist Group (all of the group's playlists become available together while active).
+  try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN target_type TEXT DEFAULT 'playlist'`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN playlist_group_id INTEGER`); } catch(e) {}
   try {
     // One-time migration: wrap any pre-existing flat (ungrouped) rotation steps,
     // plus the old global rotation_enabled/rotation_started_at settings, into a "Default" group.
@@ -249,6 +267,47 @@ async function deleteSchedule(playlist) {
   await db.run(`DELETE FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
+// --- Playlist Groups (created in Media Manager; selectable as a single Rotation step target) ---
+
+async function getPlaylistGroups() {
+  const db = await getDb();
+  const groups = await db.all(`SELECT * FROM playlist_groups ORDER BY name ASC`);
+  const members = await db.all(`SELECT * FROM playlist_group_members ORDER BY group_id ASC, playlist ASC`);
+  return groups.map(g => ({
+    id: g.id,
+    name: g.name,
+    playlists: members.filter(m => m.group_id === g.id).map(m => m.playlist)
+  }));
+}
+
+async function createPlaylistGroup(name) {
+  const db = await getDb();
+  const result = await db.run(`INSERT INTO playlist_groups (name) VALUES (?)`, [name]);
+  return result.lastID;
+}
+
+async function renamePlaylistGroup(groupId, name) {
+  const db = await getDb();
+  await db.run(`UPDATE playlist_groups SET name = ? WHERE id = ?`, [name, groupId]);
+}
+
+async function deletePlaylistGroup(groupId) {
+  const db = await getDb();
+  await db.run(`DELETE FROM playlist_group_members WHERE group_id = ?`, [groupId]);
+  await db.run(`DELETE FROM playlist_groups WHERE id = ?`, [groupId]);
+  // Any rotation steps pointing at this group fall back to "no playlists" until re-pointed.
+  await db.run(`UPDATE rotation_steps SET playlist_group_id = NULL WHERE playlist_group_id = ?`, [groupId]);
+}
+
+async function setPlaylistGroupMembers(groupId, playlists) {
+  const db = await getDb();
+  await db.run(`DELETE FROM playlist_group_members WHERE group_id = ?`, [groupId]);
+  const clean = Array.isArray(playlists) ? [...new Set(playlists.filter(p => typeof p === 'string' && p))] : [];
+  for (const p of clean) {
+    await db.run(`INSERT OR IGNORE INTO playlist_group_members (group_id, playlist) VALUES (?, ?)`, [groupId, p]);
+  }
+}
+
 // --- Rotation (named groups of repeating play/pause cycles, each independently on/off) ---
 
 // True while nowM falls inside [startTime, endTime) (wrapping past midnight if end < start).
@@ -282,11 +341,22 @@ function _dateStr(now) {
   return `${y}-${m}-${d}`;
 }
 
+// Resolves what a 'play' step actually unlocks: a single playlist, or (when it targets a
+// Playlist Group) every playlist currently in that group. `groupPlaylistsById` maps
+// playlist_group_id -> string[] of playlists, from getPlaylistGroups().
+function _stepPlaylists(step, groupPlaylistsById) {
+  if (step.target_type === 'group' && step.playlist_group_id != null) {
+    return (groupPlaylistsById && groupPlaylistsById.get(step.playlist_group_id)) || [];
+  }
+  return step.playlist ? [step.playlist] : [];
+}
+
 // Pure computation of a single group's current state — no DB access, so it can be
 // reused for both the live scheduling decision and the admin status display without
 // re-querying. `now` = current Date (configured timezone); `nowM` = minutes since
-// local midnight, for each step's optional time window.
-function _computeGroupStatus(group, now, nowM) {
+// local midnight, for each step's optional time window; `groupPlaylistsById` resolves
+// any step that targets a Playlist Group rather than a single playlist.
+function _computeGroupStatus(group, now, nowM, groupPlaylistsById) {
   const steps = group.steps || [];
   const base = { groupId: group.id, name: group.name, enabled: group.enabled, steps, dayMode: group.day_mode || 'all', days: group.days || [], todayDate: group.today_date || null };
 
@@ -300,12 +370,14 @@ function _computeGroupStatus(group, now, nowM) {
 
   // A mandatory step locks the group onto it indefinitely — ignoring elapsed-time
   // cycling and its own time window — until an admin clears the mandatory flag.
-  const mandatoryIdx = steps.findIndex(s => s.mandatory === 1 && s.type === 'play' && s.playlist);
+  const mandatoryIdx = steps.findIndex(s => s.mandatory === 1 && s.type === 'play' && _stepPlaylists(s, groupPlaylistsById).length > 0);
   if (mandatoryIdx !== -1) {
+    const playlists = _stepPlaylists(steps[mandatoryIdx], groupPlaylistsById);
     return {
       ...base,
       mode: 'play',
-      playlist: steps[mandatoryIdx].playlist,
+      playlists,
+      playlist: playlists[0] || null,
       mandatory: true,
       stepIndex: mandatoryIdx,
       remainingMs: null,
@@ -333,7 +405,8 @@ function _computeGroupStatus(group, now, nowM) {
           // Outside this step's allowed clock window - sit this turn out.
           return { ...base, mode: 'pause', gated: true, stepIndex: i, remainingMs, totalMs };
         }
-        return { ...base, mode: 'play', playlist: s.playlist, mandatory: false, stepIndex: i, remainingMs, totalMs };
+        const playlists = _stepPlaylists(s, groupPlaylistsById);
+        return { ...base, mode: 'play', playlists, playlist: playlists[0] || null, mandatory: false, stepIndex: i, remainingMs, totalMs };
       }
       return { ...base, mode: 'pause', stepIndex: i, remainingMs, totalMs };
     }
@@ -421,8 +494,12 @@ async function setGroupSteps(groupId, steps) {
     const type = step.type === 'pause' ? 'pause' : 'play';
     const minutes = Math.max(1, parseInt(step.duration_minutes) || 0);
     if (!minutes) continue;
-    const playlist = type === 'play' ? (step.playlist || '') : null;
-    if (type === 'play' && !playlist) continue; // a play step needs a playlist
+
+    const targetsGroup = type === 'play' && step.target_type === 'group';
+    const playlist = type === 'play' && !targetsGroup ? (step.playlist || '') : null;
+    const playlistGroupId = targetsGroup ? parseInt(step.playlist_group_id) : null;
+    if (type === 'play' && !targetsGroup && !playlist) continue; // a playlist step needs a playlist
+    if (type === 'play' && targetsGroup && !playlistGroupId) continue; // a group step needs a group
 
     const hasWindow = type === 'play' && step.start_time && step.end_time;
     const startTime = hasWindow ? step.start_time : null;
@@ -436,9 +513,9 @@ async function setGroupSteps(groupId, steps) {
     }
 
     await db.run(
-      `INSERT INTO rotation_steps (group_id, step_order, type, playlist, duration_minutes, start_time, end_time, mandatory)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [groupId, order, type, playlist, minutes, startTime, endTime, mandatory]
+      `INSERT INTO rotation_steps (group_id, step_order, type, playlist, duration_minutes, start_time, end_time, mandatory, target_type, playlist_group_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [groupId, order, type, playlist, minutes, startTime, endTime, mandatory, targetsGroup ? 'group' : 'playlist', playlistGroupId]
     );
     order++;
   }
@@ -478,7 +555,13 @@ async function getAllGroupStatuses() {
   const groups = await getRotationGroups();
   const now = await getNowInConfiguredTimezone();
   const nowM = now.getHours() * 60 + now.getMinutes();
-  return groups.map(g => _computeGroupStatus(g, now, nowM));
+  const groupPlaylistsById = await _playlistGroupLookup();
+  return groups.map(g => _computeGroupStatus(g, now, nowM, groupPlaylistsById));
+}
+
+async function _playlistGroupLookup() {
+  const groups = await getPlaylistGroups();
+  return new Map(groups.map(g => [g.id, g.playlists]));
 }
 
 // --- Browser Links (admin-curated kiosk-mode web links, with a per-link ---
@@ -509,19 +592,24 @@ async function getBrowserLink(linkId) {
   return { ...link, approvedDomains: domains.map(d => d.domain) };
 }
 
-async function createBrowserLink(name, url, thumbnail, groupName) {
+async function createBrowserLink(name, url, thumbnail, groupName, forcePortrait) {
   const db = await getDb();
   const domain = _domainOf(url);
   if (!domain) throw new Error('Invalid URL');
   const result = await db.run(
-    `INSERT INTO browser_links (name, url, domain, thumbnail, group_name) VALUES (?, ?, ?, ?, ?)`,
-    [name, url, domain, thumbnail || null, groupName || null]
+    `INSERT INTO browser_links (name, url, domain, thumbnail, group_name, force_portrait) VALUES (?, ?, ?, ?, ?, ?)`,
+    [name, url, domain, thumbnail || null, groupName || null, forcePortrait ? 1 : 0]
   );
   await db.run(
     `INSERT OR IGNORE INTO browser_approved_domains (link_id, domain) VALUES (?, ?)`,
     [result.lastID, domain]
   );
   return result.lastID;
+}
+
+async function setBrowserLinkPortrait(linkId, forcePortrait) {
+  const db = await getDb();
+  await db.run(`UPDATE browser_links SET force_portrait = ? WHERE id = ?`, [forcePortrait ? 1 : 0, linkId]);
 }
 
 async function deleteBrowserLink(linkId) {
@@ -883,11 +971,12 @@ async function getPlaylistsForDisplay() {
   const rotationGroups = await getRotationGroups();
   if (rotationGroups.length > 0) {
     const forced = new Set();
+    const groupPlaylistsById = await _playlistGroupLookup();
     for (const g of rotationGroups) {
       if (!g.enabled) continue;
-      const status = _computeGroupStatus(g, now, nowM);
-      if (status.mode === 'play' && status.playlist) {
-        forced.add(status.playlist);
+      const status = _computeGroupStatus(g, now, nowM, groupPlaylistsById);
+      if (status.mode === 'play') {
+        for (const p of (status.playlists || [])) forced.add(p);
       }
     }
     if (forced.size > 0) {
@@ -1156,7 +1245,8 @@ module.exports = {
   getRotationGroups, createRotationGroup, renameRotationGroup, deleteRotationGroup,
   setGroupSteps, setGroupEnabled, restartGroupCycle, setStepMandatory, getAllGroupStatuses,
   setGroupSchedule,
-  getBrowserLinks, getBrowserLink, createBrowserLink, deleteBrowserLink,
+  getPlaylistGroups, createPlaylistGroup, renamePlaylistGroup, deletePlaylistGroup, setPlaylistGroupMembers,
+  getBrowserLinks, getBrowserLink, createBrowserLink, deleteBrowserLink, setBrowserLinkPortrait,
   checkOrRequestApproval, getApprovalStatus, getPendingApprovals, resolveApproval
 };
 

@@ -42,4 +42,33 @@ function startScheduler(mediaPath) {
   console.log('[Scheduler] Started — checking every minute for scheduled downloads.');
 }
 
-module.exports = { startScheduler };
+// Rotation steps (and other schedule-driven windows) change automatically as time passes -
+// nothing "pushes" that to an already-connected TV, so a device sitting on a playing video
+// wouldn't notice a step transition (e.g. play -> pause) until it happened to re-fetch on its
+// own (video ending, user navigating back). This watches what getPlaylistsForDisplay() would
+// currently allow and bumps force_reload_timestamp the moment that set actually changes, which
+// the TV app already polls for and reacts to by exiting the player back to the library.
+let _lastAllowedKey = null;
+
+function startRotationWatcher(intervalMs = 20000) {
+  setInterval(async () => {
+    try {
+      const display = await db.getPlaylistsForDisplay();
+      const key = display.mode === 'priority'
+        ? `priority:${[...display.playlists].sort().join(',')}`
+        : display.mode;
+
+      if (_lastAllowedKey !== null && key !== _lastAllowedKey) {
+        console.log(`[RotationWatcher] Allowed content changed (${_lastAllowedKey} -> ${key}), triggering TV reload`);
+        await db.setSetting('force_reload_timestamp', Date.now().toString());
+      }
+      _lastAllowedKey = key;
+    } catch (e) {
+      console.error('[RotationWatcher] Error:', e.message);
+    }
+  }, intervalMs);
+
+  console.log(`[RotationWatcher] Started — checking every ${intervalMs / 1000}s for schedule/rotation transitions.`);
+}
+
+module.exports = { startScheduler, startRotationWatcher };
