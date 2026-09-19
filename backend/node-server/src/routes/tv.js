@@ -106,6 +106,15 @@ router.get('/api/status', async (req, res) => {
       response.message = sleepStatus.message ?? 'Time for bed!';
       response.audio = sleepStatus.audio ?? '';
       response.image = sleepStatus.image ?? '';
+    } else {
+      // Bedtime always wins; only check for a schedule/rotation pause if it's not active.
+      const pauseStatus = await db.getPauseLockStatus();
+      if (pauseStatus && pauseStatus.locked) {
+        response.locked = true;
+        response.message = pauseStatus.message;
+        response.audio = pauseStatus.audio;
+        response.image = pauseStatus.image;
+      }
     }
 
     res.json(response);

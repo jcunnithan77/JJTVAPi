@@ -982,8 +982,12 @@ async function getPlaylistsForDisplay() {
   // Two independent sources can force a playlist "on": Rotation Groups (each running its
   // own ordered play/pause cycle) and a playlist's own scheduled window+cycle (set directly
   // on the playlist in Media Manager). Whatever any of them currently wants on is unioned
-  // together; if nothing does, fall through to normal scheduling below.
+  // together; if nothing does, fall through to normal scheduling below. `anyPausing` tracks
+  // whether at least one of these sources is specifically in its pause phase right now (as
+  // opposed to simply not being configured at all) - isSystemAsleep() uses that to show a
+  // full-screen pause message instead of silently falling back to open browsing.
   const forced = new Set();
+  let anyPausing = false;
 
   const rotationGroups = await getRotationGroups();
   if (rotationGroups.length > 0) {
@@ -993,6 +997,8 @@ async function getPlaylistsForDisplay() {
       const status = _computeGroupStatus(g, now, nowM, groupPlaylistsById);
       if (status.mode === 'play') {
         for (const p of (status.playlists || [])) forced.add(p);
+      } else if (status.mode === 'pause') {
+        anyPausing = true;
       }
     }
   }
@@ -1012,9 +1018,10 @@ async function getPlaylistsForDisplay() {
     const posInCycle = cycleLen > 0 ? (minutesSinceStart % cycleLen) : 0;
     if (posInCycle < s.cycle_play_minutes) {
       forced.add(s.playlist);
+    } else {
+      // Currently in this playlist's own pause phase.
+      anyPausing = true;
     }
-    // else: currently in this playlist's own pause phase - contributes nothing, same as a
-    // Rotation pause step (falls through to whatever else is allowed below).
   }
 
   if (forced.size > 0) {
@@ -1034,7 +1041,7 @@ async function getPlaylistsForDisplay() {
   }
 
   if (activePlaylists.length === 0) {
-    return { mode: 'fallback', playlists: null, blocked: blockedNames };
+    return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing };
   }
 
   const completionRows = await db.all(
@@ -1073,7 +1080,29 @@ async function getPlaylistsForDisplay() {
   }
 
   // No mandatory quotas pending - show all content (still respecting blocks)
-  return { mode: 'fallback', playlists: null, blocked: blockedNames };
+  return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing };
+}
+
+const PAUSE_MESSAGES = [
+  '📚 Study Time!',
+  '🧸 Play Time!',
+  '🌳 Outside Time!',
+  '🎨 Creative Time!',
+  '🍎 Snack Time!',
+  '😴 Break Time!'
+];
+
+// A schedule or Rotation group can be actively in its own pause phase (as opposed to just
+// not being configured at all) - when that's the only thing going on right now, the whole
+// screen locks with a friendly break message, the same way bedtime already does. Kept
+// separate from isSystemAsleep() (rather than folded into it) since that function has
+// several early-return branches this shouldn't have to thread through, and because bedtime
+// should always win if both are somehow true at once - callers check isSystemAsleep() first.
+async function getPauseLockStatus() {
+  const display = await getPlaylistsForDisplay();
+  if (!display.pausing) return false;
+  const message = PAUSE_MESSAGES[Math.floor(Math.random() * PAUSE_MESSAGES.length)];
+  return { locked: true, message, audio: '', image: '' };
 }
 
 async function isPlaylistAllowed(name) {
@@ -1272,7 +1301,7 @@ module.exports = {
   getScheduledDownloads, createScheduledDownload, updateScheduledDownloadStatus, cancelScheduledDownload,
   updateMediaCache, getCachedPlaylists, getCachedVideos, clearOldCache, searchMediaCache,
   getVideoPathByHash,
-  isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay,
+  isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay, getPauseLockStatus,
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
   recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted,
   clearDailyProgress, getPlaylistProgress, addPlaylistProgress,
