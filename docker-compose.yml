@@ -11,8 +11,8 @@ services:
       - "5001:5001"
     volumes:
       # Map your Ubuntu video directory here.
-      # IMPORTANT: Verify this path exists on Ubuntu with 'ls -R /mnt/flashdrive/usb/usb/videos'
-      - /mnt/flashdrive/usb/usb/videos:/app/videos
+      # IMPORTANT: Verify this path exists on Ubuntu with 'ls -R /mnt/flashdrive/usb/videos'
+      - /mnt/flashdrive/usb/videos:/app/videos
 
       # Persistence for the database and caches
       - ./backend/jjtv_config.db:/app/jjtv_config.db
