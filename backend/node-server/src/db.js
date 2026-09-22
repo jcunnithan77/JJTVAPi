@@ -140,6 +140,14 @@ async function initDb() {
   // Playlist Group (all of the group's playlists become available together while active).
   try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN target_type TEXT DEFAULT 'playlist'`); } catch(e) {}
   try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN playlist_group_id INTEGER`); } catch(e) {}
+  // A group's mode: 'sequential' (default, unchanged) rotates through its steps one at a
+  // time using each step's own duration_minutes/pause steps, exactly as before. 'simple'
+  // ignores step ordering/duration entirely and instead allows ALL of the group's member
+  // playlists at once, optionally cycling the whole group between play/pause as a unit
+  // via cycle_play_minutes/cycle_pause_minutes (0 = always-on while enabled, no cycling).
+  try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN mode TEXT DEFAULT 'sequential'`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN cycle_play_minutes INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN cycle_pause_minutes INTEGER DEFAULT 0`); } catch(e) {}
   try {
     // One-time migration: wrap any pre-existing flat (ungrouped) rotation steps,
     // plus the old global rotation_enabled/rotation_started_at settings, into a "Default" group.
@@ -372,7 +380,7 @@ function _stepPlaylists(step, groupPlaylistsById) {
 // any step that targets a Playlist Group rather than a single playlist.
 function _computeGroupStatus(group, now, nowM, groupPlaylistsById) {
   const steps = group.steps || [];
-  const base = { groupId: group.id, name: group.name, enabled: group.enabled, steps, dayMode: group.day_mode || 'all', days: group.days || [], todayDate: group.today_date || null };
+  const base = { groupId: group.id, name: group.name, enabled: group.enabled, steps, dayMode: group.day_mode || 'all', days: group.days || [], todayDate: group.today_date || null, groupMode: group.mode || 'sequential' };
 
   if (!_isGroupActiveToday(group, now)) {
     return { ...base, mode: 'off', reason: 'wrong-day' };
@@ -380,6 +388,10 @@ function _computeGroupStatus(group, now, nowM, groupPlaylistsById) {
 
   if (!group.enabled || steps.length === 0) {
     return { ...base, mode: 'off' };
+  }
+
+  if (group.mode === 'simple') {
+    return _computeSimpleGroupStatus(group, base, steps, groupPlaylistsById);
   }
 
   // A mandatory step locks the group onto it indefinitely — ignoring elapsed-time
@@ -431,6 +443,35 @@ function _computeGroupStatus(group, now, nowM, groupPlaylistsById) {
   return { ...base, mode: 'pause', stepIndex: steps.length - 1, remainingMs: 0, totalMs };
 }
 
+// 'simple' mode: no per-step ordering/duration - every member playlist (steps targeting a
+// single playlist or a Playlist Group, flattened and de-duped) is allowed together as one
+// unit, optionally cycling the whole group between play/pause via cycle_play_minutes /
+// cycle_pause_minutes rather than each step timing itself individually.
+function _computeSimpleGroupStatus(group, base, steps, groupPlaylistsById) {
+  const allPlaylists = [...new Set(steps.flatMap(s => _stepPlaylists(s, groupPlaylistsById)))];
+  if (allPlaylists.length === 0) {
+    return { ...base, mode: 'off' };
+  }
+
+  const playMinutes = group.cycle_play_minutes || 0;
+  if (playMinutes <= 0) {
+    // No cycle configured - simply on for as long as the group is enabled.
+    return { ...base, mode: 'play', playlists: allPlaylists, playlist: allPlaylists[0], mandatory: false, remainingMs: null, totalMs: null };
+  }
+
+  const playMs = playMinutes * 60000;
+  const pauseMs = (group.cycle_pause_minutes || 0) * 60000;
+  const totalMs = playMs + pauseMs;
+  const startedAt = group.started_at || Date.now();
+  let elapsed = (Date.now() - startedAt) % totalMs;
+  if (elapsed < 0) elapsed += totalMs;
+
+  if (elapsed < playMs) {
+    return { ...base, mode: 'play', playlists: allPlaylists, playlist: allPlaylists[0], mandatory: false, remainingMs: playMs - elapsed, totalMs };
+  }
+  return { ...base, mode: 'pause', remainingMs: totalMs - elapsed, totalMs };
+}
+
 async function getRotationGroups() {
   const db = await getDb();
   const groups = await db.all(`SELECT * FROM rotation_groups ORDER BY sort_order ASC, id ASC`);
@@ -443,6 +484,9 @@ async function getRotationGroups() {
     day_mode: g.day_mode || 'all',
     days: _parseDays(g.days),
     today_date: g.today_date || null,
+    mode: g.mode === 'simple' ? 'simple' : 'sequential',
+    cycle_play_minutes: g.cycle_play_minutes || 0,
+    cycle_pause_minutes: g.cycle_pause_minutes || 0,
     steps: steps.filter(s => s.group_id === g.id)
   }));
 }
@@ -534,6 +578,19 @@ async function setGroupSteps(groupId, steps) {
     order++;
   }
   await db.run(`UPDATE rotation_groups SET started_at = ? WHERE id = ?`, [Date.now(), groupId]);
+}
+
+async function setGroupMode(groupId, mode) {
+  const db = await getDb();
+  const clean = mode === 'simple' ? 'simple' : 'sequential';
+  await db.run(`UPDATE rotation_groups SET mode = ? WHERE id = ?`, [clean, groupId]);
+}
+
+async function setGroupCycle(groupId, playMinutes, pauseMinutes) {
+  const db = await getDb();
+  const play = Math.max(0, parseInt(playMinutes) || 0);
+  const pause = Math.max(0, parseInt(pauseMinutes) || 0);
+  await db.run(`UPDATE rotation_groups SET cycle_play_minutes = ?, cycle_pause_minutes = ? WHERE id = ?`, [play, pause, groupId]);
 }
 
 async function setGroupEnabled(groupId, enabled) {
@@ -1310,7 +1367,7 @@ module.exports = {
   renamePlaylist, renameVideo,
   getRotationGroups, createRotationGroup, renameRotationGroup, deleteRotationGroup,
   setGroupSteps, setGroupEnabled, restartGroupCycle, setStepMandatory, getAllGroupStatuses,
-  setGroupSchedule,
+  setGroupSchedule, setGroupMode, setGroupCycle,
   getPlaylistGroups, createPlaylistGroup, renamePlaylistGroup, deletePlaylistGroup, setPlaylistGroupMembers,
   getBrowserLinks, getBrowserLink, createBrowserLink, deleteBrowserLink, setBrowserLinkPortrait,
   checkOrRequestApproval, getApprovalStatus, getPendingApprovals, resolveApproval

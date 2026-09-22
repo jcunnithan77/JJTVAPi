@@ -216,6 +216,20 @@ router.post('/admin-api/rotation/groups/:id/schedule', async (req, res) => {
   res.json({ success: true });
 });
 
+router.post('/admin-api/rotation/groups/:id/mode', async (req, res) => {
+  const { mode } = req.body || {};
+  await db.setGroupMode(parseInt(req.params.id), mode);
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
+router.post('/admin-api/rotation/groups/:id/cycle', async (req, res) => {
+  const { cycle_play_minutes, cycle_pause_minutes } = req.body || {};
+  await db.setGroupCycle(parseInt(req.params.id), cycle_play_minutes, cycle_pause_minutes);
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
 router.post('/admin-api/rotation/steps/:stepId/mandatory', async (req, res) => {
   const { mandatory } = req.body || {};
   await db.setStepMandatory(parseInt(req.params.stepId), !!mandatory);
