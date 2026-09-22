@@ -148,6 +148,11 @@ async function initDb() {
   try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN mode TEXT DEFAULT 'sequential'`); } catch(e) {}
   try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN cycle_play_minutes INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN cycle_pause_minutes INTEGER DEFAULT 0`); } catch(e) {}
+  // Per-pause background playlist: a 'pause' step (sequential mode) or a whole group's pause
+  // phase (simple mode) can pick a playlist whose audio loops for that specific pause,
+  // overriding the global Settings -> Pause-Time Background Music default just for it.
+  try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN pause_playlist TEXT`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN pause_playlist TEXT`); } catch(e) {}
   try {
     // One-time migration: wrap any pre-existing flat (ungrouped) rotation steps,
     // plus the old global rotation_enabled/rotation_started_at settings, into a "Default" group.
@@ -429,18 +434,18 @@ function _computeGroupStatus(group, now, nowM, groupPlaylistsById) {
       if (s.type === 'play') {
         if (!_inClockWindow(s.start_time, s.end_time, nowM)) {
           // Outside this step's allowed clock window - sit this turn out.
-          return { ...base, mode: 'pause', gated: true, stepIndex: i, remainingMs, totalMs };
+          return { ...base, mode: 'pause', gated: true, stepIndex: i, remainingMs, totalMs, pausePlaylist: null };
         }
         const playlists = _stepPlaylists(s, groupPlaylistsById);
         return { ...base, mode: 'play', playlists, playlist: playlists[0] || null, mandatory: false, stepIndex: i, remainingMs, totalMs };
       }
-      return { ...base, mode: 'pause', stepIndex: i, remainingMs, totalMs };
+      return { ...base, mode: 'pause', stepIndex: i, remainingMs, totalMs, pausePlaylist: s.pause_playlist || null };
     }
     acc += durMs;
   }
 
   // Rounding safety net - treat as the final step's pause.
-  return { ...base, mode: 'pause', stepIndex: steps.length - 1, remainingMs: 0, totalMs };
+  return { ...base, mode: 'pause', stepIndex: steps.length - 1, remainingMs: 0, totalMs, pausePlaylist: steps[steps.length - 1]?.pause_playlist || null };
 }
 
 // 'simple' mode: no per-step ordering/duration - every member playlist (steps targeting a
@@ -469,7 +474,7 @@ function _computeSimpleGroupStatus(group, base, steps, groupPlaylistsById) {
   if (elapsed < playMs) {
     return { ...base, mode: 'play', playlists: allPlaylists, playlist: allPlaylists[0], mandatory: false, remainingMs: playMs - elapsed, totalMs };
   }
-  return { ...base, mode: 'pause', remainingMs: totalMs - elapsed, totalMs };
+  return { ...base, mode: 'pause', remainingMs: totalMs - elapsed, totalMs, pausePlaylist: group.pause_playlist || null };
 }
 
 async function getRotationGroups() {
@@ -487,6 +492,7 @@ async function getRotationGroups() {
     mode: g.mode === 'simple' ? 'simple' : 'sequential',
     cycle_play_minutes: g.cycle_play_minutes || 0,
     cycle_pause_minutes: g.cycle_pause_minutes || 0,
+    pause_playlist: g.pause_playlist || null,
     steps: steps.filter(s => s.group_id === g.id)
   }));
 }
@@ -570,10 +576,13 @@ async function setGroupSteps(groupId, steps) {
       mandatoryClaimed = true;
     }
 
+    // A pause step can override the global Settings background playlist just for itself.
+    const pausePlaylist = type === 'pause' && step.pause_playlist ? step.pause_playlist : null;
+
     await db.run(
-      `INSERT INTO rotation_steps (group_id, step_order, type, playlist, duration_minutes, start_time, end_time, mandatory, target_type, playlist_group_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [groupId, order, type, playlist, minutes, startTime, endTime, mandatory, targetsGroup ? 'group' : 'playlist', playlistGroupId]
+      `INSERT INTO rotation_steps (group_id, step_order, type, playlist, duration_minutes, start_time, end_time, mandatory, target_type, playlist_group_id, pause_playlist)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [groupId, order, type, playlist, minutes, startTime, endTime, mandatory, targetsGroup ? 'group' : 'playlist', playlistGroupId, pausePlaylist]
     );
     order++;
   }
@@ -591,6 +600,13 @@ async function setGroupCycle(groupId, playMinutes, pauseMinutes) {
   const play = Math.max(0, parseInt(playMinutes) || 0);
   const pause = Math.max(0, parseInt(pauseMinutes) || 0);
   await db.run(`UPDATE rotation_groups SET cycle_play_minutes = ?, cycle_pause_minutes = ? WHERE id = ?`, [play, pause, groupId]);
+}
+
+// Only meaningful for a 'simple' mode group's own pause phase - overrides the global
+// Settings background playlist just for this group's pauses. Pass '' to clear the override.
+async function setGroupPausePlaylist(groupId, playlist) {
+  const db = await getDb();
+  await db.run(`UPDATE rotation_groups SET pause_playlist = ? WHERE id = ?`, [playlist || null, groupId]);
 }
 
 async function setGroupEnabled(groupId, enabled) {
@@ -1045,6 +1061,11 @@ async function getPlaylistsForDisplay() {
   // full-screen pause message instead of silently falling back to open browsing.
   const forced = new Set();
   let anyPausing = false;
+  // The specific pause's chosen background playlist, if any (a pause step or a simple-mode
+  // group's own pause_playlist) - overrides the global Settings default just for that pause.
+  // If multiple pauses happen to overlap with different overrides, the first one found wins;
+  // an edge case not worth resolving more precisely.
+  let pausingPlaylist = null;
 
   const rotationGroups = await getRotationGroups();
   if (rotationGroups.length > 0) {
@@ -1056,6 +1077,7 @@ async function getPlaylistsForDisplay() {
         for (const p of (status.playlists || [])) forced.add(p);
       } else if (status.mode === 'pause') {
         anyPausing = true;
+        if (!pausingPlaylist && status.pausePlaylist) pausingPlaylist = status.pausePlaylist;
       }
     }
   }
@@ -1098,7 +1120,7 @@ async function getPlaylistsForDisplay() {
   }
 
   if (activePlaylists.length === 0) {
-    return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing };
+    return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing, pausingPlaylist };
   }
 
   const completionRows = await db.all(
@@ -1137,7 +1159,7 @@ async function getPlaylistsForDisplay() {
   }
 
   // No mandatory quotas pending - show all content (still respecting blocks)
-  return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing };
+  return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing, pausingPlaylist };
 }
 
 const PAUSE_MESSAGES = [
@@ -1160,14 +1182,15 @@ async function getPauseLockStatus() {
   if (!display.pausing) return false;
   const message = PAUSE_MESSAGES[Math.floor(Math.random() * PAUSE_MESSAGES.length)];
 
-  // Admin can pick an existing playlist (Settings) to keep playing in the background - just
-  // the audio, since the lock screen itself covers the video - for as long as the pause
-  // lasts, rather than the single fixed clip bedtime lock uses. The client loops through
-  // the whole list rather than one track, since a pause phase can run far longer than any
-  // single video.
+  // Admin can pick an existing playlist to keep playing in the background - just the audio,
+  // since the lock screen itself covers the video - for as long as the pause lasts, rather
+  // than the single fixed clip bedtime lock uses. The client loops through the whole list
+  // rather than one track, since a pause phase can run far longer than any single video.
+  // A specific pause step/group can override the global Settings default just for itself
+  // (display.pausingPlaylist); falls back to that default when no override is set.
   let audioPlaylist = [];
   const settings = await getSettings();
-  const playlistName = settings.pause_lock_playlist || '';
+  const playlistName = display.pausingPlaylist || settings.pause_lock_playlist || '';
   if (playlistName) {
     const videos = await getCachedVideos(playlistName);
     audioPlaylist = videos.map(v => `/stream/hash/${v.vhash}`);
@@ -1381,7 +1404,7 @@ module.exports = {
   renamePlaylist, renameVideo,
   getRotationGroups, createRotationGroup, renameRotationGroup, deleteRotationGroup,
   setGroupSteps, setGroupEnabled, restartGroupCycle, setStepMandatory, getAllGroupStatuses,
-  setGroupSchedule, setGroupMode, setGroupCycle,
+  setGroupSchedule, setGroupMode, setGroupCycle, setGroupPausePlaylist,
   getPlaylistGroups, createPlaylistGroup, renamePlaylistGroup, deletePlaylistGroup, setPlaylistGroupMembers,
   getBrowserLinks, getBrowserLink, createBrowserLink, deleteBrowserLink, setBrowserLinkPortrait,
   checkOrRequestApproval, getApprovalStatus, getPendingApprovals, resolveApproval
