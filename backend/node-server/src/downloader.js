@@ -19,6 +19,8 @@ const FFMPEG_PATH = process.env.FFMPEG_BIN || (os.platform() === 'win32' ? path.
 
 const DEFAULT_THUMB = path.join(__dirname, '..', '..', 'default_thumb.jpg');
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm']);
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.aac', '.opus', '.ogg', '.flac', '.wav']);
+const MEDIA_EXTENSIONS = new Set([...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS]);
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
 
 // Public state — read by stats endpoint
@@ -27,9 +29,9 @@ const downloadQueue = [];
 let isWorkerBusy = false;
 const emitter = new EventEmitter();
 
-function queueDownload(jobId, url, playlist, mediaPath) {
+function queueDownload(jobId, url, playlist, mediaPath, audioOnly = false) {
   activeDownloads[jobId] = { status: 'queued', percent: 0, title: 'Waiting in queue...', playlist };
-  downloadQueue.push({ jobId, url, playlist, mediaPath });
+  downloadQueue.push({ jobId, url, playlist, mediaPath, audioOnly });
   processQueue(mediaPath);
   return jobId;
 }
@@ -38,19 +40,36 @@ function processQueue(mediaPath) {
   if (isWorkerBusy || downloadQueue.length === 0) return;
   isWorkerBusy = true;
   const job = downloadQueue.shift();
-  _doDownload(job.jobId, job.url, job.playlist, job.mediaPath).finally(() => {
+  _doDownload(job.jobId, job.url, job.playlist, job.mediaPath, job.audioOnly).finally(() => {
     isWorkerBusy = false;
     processQueue(mediaPath);
   });
 }
 
-async function _doDownload(jobId, url, playlist, mediaPath) {
+async function _doDownload(jobId, url, playlist, mediaPath, audioOnly = false) {
   const targetDir = path.join(mediaPath, _sanitize(playlist));
   fs.mkdirSync(targetDir, { recursive: true });
 
   activeDownloads[jobId] = { status: 'downloading', percent: 0, title: 'Initializing...', playlist };
 
-  const ytdlpArgs = [
+  const ytdlpArgs = audioOnly ? [
+    '-f', 'bestaudio/best',
+    '--extract-audio',
+    '--audio-format', 'mp3',
+    '--audio-quality', '0',
+    '--no-check-certificate',
+    '-o', path.join(targetDir, '%(uploader|Unknown)s', '%(playlist_title|Misc)s', '%(id)s.%(ext)s'),
+    '--write-thumbnail',
+    '--convert-thumbnails', 'jpg',
+    '--write-info-json',
+    '--no-overwrites',
+    '--ignore-errors',
+    '--progress',
+    '--newline',
+    '--no-playlist',
+    '--extractor-args', 'youtube:player-client=ios,android,mweb,web',
+    '--ffmpeg-location', FFMPEG_PATH
+  ] : [
     '-f', 'bestvideo[ext=mp4][vcodec^=avc]+bestaudio[ext=m4a]/best[ext=mp4]/best',
     '--merge-output-format', 'mp4',
     '--no-check-certificate',
@@ -88,13 +107,13 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
         if (pMatch) {
           activeDownloads[jobId].percent = parseFloat(pMatch[1]);
         }
-        // Parse title from destination line
-        const dMatch = line.match(/\[download\] Destination: .+[\\/](.+)\.(mp4|mkv|webm|avi)/i);
+        // Parse title from destination line (also matches audio-only destinations/extensions)
+        const dMatch = line.match(/\[download\] Destination: .+[\\/](.+)\.(mp4|mkv|webm|avi|m4a|opus|aac|mp3)/i);
         if (dMatch) {
           activeDownloads[jobId].title = dMatch[1];
         }
-        // Merge/process phase
-        if (line.includes('[Merger]') || line.includes('[ffmpeg]')) {
+        // Merge/process phase (video merge, or audio-only's [ExtractAudio] conversion step)
+        if (line.includes('[Merger]') || line.includes('[ffmpeg]') || line.includes('[ExtractAudio]')) {
           activeDownloads[jobId].status = 'processing';
           activeDownloads[jobId].percent = 100;
         }
@@ -108,12 +127,12 @@ async function _doDownload(jobId, url, playlist, mediaPath) {
     });
 
     proc.on('close', (code) => {
-      // Assign default thumbnails to any video that lacks one
+      // Assign default thumbnails to any downloaded file that lacks one
       try {
         const files = fs.readdirSync(targetDir);
         for (const f of files) {
           const ext = path.extname(f).toLowerCase();
-          if (VIDEO_EXTENSIONS.has(ext)) {
+          if (MEDIA_EXTENSIONS.has(ext)) {
             const base = path.join(targetDir, path.basename(f, ext));
             const hasThumb = IMAGE_EXTENSIONS.some(ie => fs.existsSync(base + ie));
             if (!hasThumb && fs.existsSync(DEFAULT_THUMB)) {

@@ -21,6 +21,11 @@ const FFPROBE_PATH = process.env.FFPROBE_BIN || (os.platform() === 'win32' ? pat
 
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm']);
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.aac', '.opus', '.ogg', '.flac', '.wav']);
+// Everything the scanner will index and treat as playable media - the schema/API/player don't
+// distinguish audio from video beyond the file extension, so audio-only downloads (see
+// downloader.js's audioOnly option) just need to be picked up by the same scan pass.
+const MEDIA_EXTENSIONS = new Set([...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS]);
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.JPG', '.PNG', '.JPEG', '.WEBP'];
 
 let isScanning = false;
@@ -40,7 +45,7 @@ async function scanAll(mediaPath) {
         for (const item of items) {
           if (item.isDirectory()) {
             walk(path.join(dir, item.name), relPath ? relPath + '/' + item.name : item.name);
-          } else if (item.isFile() && VIDEO_EXTENSIONS.has(path.extname(item.name).toLowerCase())) {
+          } else if (item.isFile() && MEDIA_EXTENSIONS.has(path.extname(item.name).toLowerCase())) {
             hasVideo = true;
           }
         }
@@ -76,7 +81,7 @@ async function scanFolder(mediaPath, folderName, rootPlaylist = folderName) {
   const folderPath = path.join(mediaPath, folderName);
   try {
     const files = fs.readdirSync(folderPath);
-    const videos = files.filter(f => VIDEO_EXTENSIONS.has(path.extname(f).toLowerCase()));
+    const videos = files.filter(f => MEDIA_EXTENSIONS.has(path.extname(f).toLowerCase()));
 
     for (const v of videos) {
       const vPath = path.join(folderPath, v);

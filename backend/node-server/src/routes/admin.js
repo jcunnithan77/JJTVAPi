@@ -346,7 +346,7 @@ function extractVideoId(url) {
 }
 
 router.post('/admin-api/download', async (req, res) => {
-  const { url, playlist = 'Downloads', force = false } = req.body || {};
+  const { url, playlist = 'Downloads', force = false, audioOnly = false } = req.body || {};
   if (!url) return res.status(400).json({ error: 'URL required' });
 
   if (force !== true && force !== 'true') {
@@ -370,7 +370,7 @@ router.post('/admin-api/download', async (req, res) => {
   }
 
   const jobId = String(Date.now());
-  queueDownload(jobId, url, playlist, MEDIA_PATH);
+  queueDownload(jobId, url, playlist, MEDIA_PATH, !!audioOnly);
   res.json({ success: true, job_id: jobId });
 });
 
