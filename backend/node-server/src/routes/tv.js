@@ -98,7 +98,11 @@ router.get('/api/status', async (req, res) => {
       image: '',
       stream_through_lan: streamThroughLan,
       lan_ip: lanUrl,
-      force_reload: Number(allSettings['force_reload_timestamp'] || 0)
+      force_reload: Number(allSettings['force_reload_timestamp'] || 0),
+      // The server's own clock, not the caller's - lets the admin panel (which may be opened
+      // from a different device/timezone) and the TV app both show the actual system time
+      // this backend uses for schedule/quota/lock evaluation, rather than a local device clock.
+      server_time: new Date().toISOString()
     };
 
     if (sleepStatus && sleepStatus.locked) {
