@@ -1159,7 +1159,21 @@ async function getPauseLockStatus() {
   const display = await getPlaylistsForDisplay();
   if (!display.pausing) return false;
   const message = PAUSE_MESSAGES[Math.floor(Math.random() * PAUSE_MESSAGES.length)];
-  return { locked: true, message, audio: '', image: '' };
+
+  // Admin can pick an existing playlist (Settings) to keep playing in the background - just
+  // the audio, since the lock screen itself covers the video - for as long as the pause
+  // lasts, rather than the single fixed clip bedtime lock uses. The client loops through
+  // the whole list rather than one track, since a pause phase can run far longer than any
+  // single video.
+  let audioPlaylist = [];
+  const settings = await getSettings();
+  const playlistName = settings.pause_lock_playlist || '';
+  if (playlistName) {
+    const videos = await getCachedVideos(playlistName);
+    audioPlaylist = videos.map(v => `/stream/hash/${v.vhash}`);
+  }
+
+  return { locked: true, message, audio: '', image: '', audioPlaylist };
 }
 
 async function isPlaylistAllowed(name) {

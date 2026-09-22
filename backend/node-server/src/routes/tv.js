@@ -119,6 +119,7 @@ router.get('/api/status', async (req, res) => {
         response.message = pauseStatus.message;
         response.audio = pauseStatus.audio;
         response.image = pauseStatus.image;
+        response.audioPlaylist = pauseStatus.audioPlaylist || [];
       }
     }
 
