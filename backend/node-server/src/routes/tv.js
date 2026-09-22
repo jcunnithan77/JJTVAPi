@@ -120,6 +120,14 @@ router.get('/api/status', async (req, res) => {
         response.audio = pauseStatus.audio;
         response.image = pauseStatus.image;
         response.audioPlaylist = pauseStatus.audioPlaylist || [];
+        // Countdown for the pause screen's "resumes in..." timer - null when the pause has
+        // no fixed length to count down (e.g. a step gated by an outside-window check).
+        response.remaining_ms = pauseStatus.remainingMs ?? null;
+      } else {
+        // Not locked at all - if something is actively playing on a cycling pause/play
+        // schedule, surface how long until it pauses, for the video player's top-bar clock.
+        const display = await db.getPlaylistsForDisplay();
+        response.next_pause_ms = display.nextPauseMs ?? null;
       }
     }
 

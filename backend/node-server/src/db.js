@@ -1066,6 +1066,12 @@ async function getPlaylistsForDisplay() {
   // If multiple pauses happen to overlap with different overrides, the first one found wins;
   // an edge case not worth resolving more precisely.
   let pausingPlaylist = null;
+  // Countdown to the app's own top-bar clock: however many ms remain until whichever cycle
+  // is currently playing switches to its pause phase, or until the current pause switches
+  // back to play - null when nothing cycling is active (e.g. a non-cycling schedule, or nothing
+  // configured at all), same "first one found wins" caveat as pausingPlaylist above.
+  let nextPauseMs = null;
+  let pausingRemainingMs = null;
 
   const rotationGroups = await getRotationGroups();
   if (rotationGroups.length > 0) {
@@ -1075,9 +1081,11 @@ async function getPlaylistsForDisplay() {
       const status = _computeGroupStatus(g, now, nowM, groupPlaylistsById);
       if (status.mode === 'play') {
         for (const p of (status.playlists || [])) forced.add(p);
+        if (nextPauseMs === null && status.remainingMs != null) nextPauseMs = status.remainingMs;
       } else if (status.mode === 'pause') {
         anyPausing = true;
         if (!pausingPlaylist && status.pausePlaylist) pausingPlaylist = status.pausePlaylist;
+        if (pausingRemainingMs === null && status.remainingMs != null) pausingRemainingMs = status.remainingMs;
       }
     }
   }
@@ -1097,16 +1105,20 @@ async function getPlaylistsForDisplay() {
     const posInCycle = cycleLen > 0 ? (minutesSinceStart % cycleLen) : 0;
     if (posInCycle < s.cycle_play_minutes) {
       forced.add(s.playlist);
+      const remaining = (s.cycle_play_minutes - posInCycle) * 60000;
+      if (nextPauseMs === null || remaining < nextPauseMs) nextPauseMs = remaining;
     } else {
       // Currently in this playlist's own pause phase.
       anyPausing = true;
+      const remaining = (cycleLen - posInCycle) * 60000;
+      if (pausingRemainingMs === null || remaining < pausingRemainingMs) pausingRemainingMs = remaining;
     }
   }
 
   if (forced.size > 0) {
     const notBlocked = [...forced].filter(p => !blockedNames.some(b => p === b || p.startsWith(b + '/')));
     if (notBlocked.length > 0) {
-      return { mode: 'priority', playlists: notBlocked, blocked: blockedNames };
+      return { mode: 'priority', playlists: notBlocked, blocked: blockedNames, nextPauseMs };
     }
   }
 
@@ -1120,7 +1132,7 @@ async function getPlaylistsForDisplay() {
   }
 
   if (activePlaylists.length === 0) {
-    return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing, pausingPlaylist };
+    return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing, pausingPlaylist, pausingRemainingMs };
   }
 
   const completionRows = await db.all(
@@ -1159,7 +1171,7 @@ async function getPlaylistsForDisplay() {
   }
 
   // No mandatory quotas pending - show all content (still respecting blocks)
-  return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing, pausingPlaylist };
+  return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing, pausingPlaylist, pausingRemainingMs };
 }
 
 const PAUSE_MESSAGES = [
@@ -1196,7 +1208,7 @@ async function getPauseLockStatus() {
     audioPlaylist = videos.map(v => `/stream/hash/${v.vhash}`);
   }
 
-  return { locked: true, message, audio: '', image: '', audioPlaylist };
+  return { locked: true, message, audio: '', image: '', audioPlaylist, remainingMs: display.pausingRemainingMs };
 }
 
 async function isPlaylistAllowed(name) {
