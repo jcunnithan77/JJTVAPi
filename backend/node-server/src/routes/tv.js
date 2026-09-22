@@ -261,14 +261,17 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       const streams = await db.getLiveStreams();
       // Admin-configured live entries are often a YouTube watch/share link rather than a
       // direct media URL, which ExoPlayer can't play as-is - resolve each to a real
-      // playable stream URL (cached briefly server-side; see liveResolver.js) before
-      // handing it to the TV app.
-      const playableUrls = await Promise.all(streams.map(s => getPlayableUrl(s.id, s.url)));
-      videos = streams.map((s, i) => ({
+      // playable stream URL server-side (cached briefly; see liveResolver.js). The TV app is
+      // pointed at our OWN /api/live-proxy endpoint rather than that resolved URL directly:
+      // YouTube's signed googlevideo.com URLs are tied to the IP that resolved them, so if the
+      // TV played the raw URL straight from a different network than this server, YouTube's
+      // CDN rejects it - routing playback through our own server (same IP that did the
+      // resolving) avoids that mismatch entirely.
+      videos = streams.map((s) => ({
         filename: s.title,
         title: s.title,
-        url: playableUrls[i],
-        hls_url: playableUrls[i],
+        url: `/api/live-proxy/${s.id}`,
+        hls_url: `/api/live-proxy/${s.id}`,
         thumbnail: s.thumbnail,
         duration: '',
         size_mb: 0,
@@ -491,6 +494,51 @@ router.get('/uploads/*', (req, res) => {
   res.setHeader('Content-Type', mimeType);
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.sendFile(fullPath);
+});
+
+// Proxies a configured live stream's actual bytes through this server, rather than handing
+// the TV app YouTube's resolved googlevideo.com URL directly - that signed URL is tied to
+// whatever IP resolved it (this server's), so a client playing it from a different network
+// gets rejected by YouTube's CDN. Fetching it here and relaying the response keeps the
+// request on this server's IP end-to-end. Forwards Range so ExoPlayer's seeking/chunked
+// reads work the same as a normal progressive download.
+router.get('/api/live-proxy/:id', async (req, res) => {
+  const streamId = parseInt(req.params.id);
+  console.log(`[TV-API] GET /api/live-proxy/${streamId} from ${req.ip}`);
+
+  try {
+    const streams = await db.getLiveStreams();
+    const stream = streams.find(s => s.id === streamId);
+    if (!stream) return res.status(404).send('Live stream not found');
+
+    const upstreamUrl = await getPlayableUrl(stream.id, stream.url);
+
+    const upstreamHeaders = {};
+    if (req.headers.range) upstreamHeaders['Range'] = req.headers.range;
+
+    const upstreamRes = await fetch(upstreamUrl, { headers: upstreamHeaders });
+    if (!upstreamRes.ok && upstreamRes.status !== 206) {
+      console.error(`[TV-API] live-proxy upstream error ${upstreamRes.status} for stream ${streamId}`);
+      return res.status(502).send('Upstream stream unavailable');
+    }
+
+    res.status(upstreamRes.status);
+    for (const header of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+      const value = upstreamRes.headers.get(header);
+      if (value) res.setHeader(header, value);
+    }
+    if (!res.getHeader('accept-ranges')) res.setHeader('Accept-Ranges', 'bytes');
+
+    if (upstreamRes.body) {
+      const { Readable } = require('stream');
+      Readable.fromWeb(upstreamRes.body).pipe(res);
+    } else {
+      res.end();
+    }
+  } catch (e) {
+    console.error(`[TV-API] live-proxy error for stream ${streamId}:`, e.message);
+    if (!res.headersSent) res.status(502).send('Live stream proxy error: ' + e.message);
+  }
 });
 
 // Robust hash-based streaming (handles special characters like ?, #, etc)
