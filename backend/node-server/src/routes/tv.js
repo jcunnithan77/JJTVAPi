@@ -12,6 +12,7 @@ const mime = require('mime-types');
 const os = require('os');
 const db = require('../db');
 const { registerVideo, getOrCreateHls, HLS_CACHE_PATH, getVideoPath, touchStream } = require('../hls');
+const { getPlayableUrl } = require('../liveResolver');
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm']);
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.JPG', '.PNG', '.JPEG', '.WEBP'];
@@ -257,11 +258,16 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
     let videos = [];
     if (playlistId === 'Live' && db.getLiveStreams) {
       const streams = await db.getLiveStreams();
-      videos = streams.map(s => ({
+      // Admin-configured live entries are often a YouTube watch/share link rather than a
+      // direct media URL, which ExoPlayer can't play as-is - resolve each to a real
+      // playable stream URL (cached briefly server-side; see liveResolver.js) before
+      // handing it to the TV app.
+      const playableUrls = await Promise.all(streams.map(s => getPlayableUrl(s.id, s.url)));
+      videos = streams.map((s, i) => ({
         filename: s.title,
         title: s.title,
-        url: s.url,
-        hls_url: s.url, // ExoPlayer will play the direct URL
+        url: playableUrls[i],
+        hls_url: playableUrls[i],
         thumbnail: s.thumbnail,
         duration: '',
         size_mb: 0,
