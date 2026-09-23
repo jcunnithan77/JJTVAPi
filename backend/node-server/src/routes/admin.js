@@ -263,7 +263,7 @@ router.get('/admin-api/menus', async (req, res) => {
 router.post('/admin-api/menus', async (req, res) => {
   const { name } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
-  const id = await db.createMenu(name.trim(), '📁');
+  const id = await db.createMenu(name.trim());
   res.json({ success: true, id });
 });
 

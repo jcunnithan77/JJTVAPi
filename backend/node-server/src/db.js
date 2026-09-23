@@ -1371,12 +1371,18 @@ async function getMenuLockStatus(menuId) {
   return { locked: true, message: _currentPauseMessage(), audioPlaylist, remainingMs: status.remainingMs };
 }
 
+// A fresh menu's default icon, before the admin picks their own - random rather than always
+// the same folder icon, so a row of newly created menus is visually distinguishable at a
+// glance in both the admin panel and the TV app's nav row.
+const MENU_ICON_CHOICES = ['🎬', '🎵', '📚', '🎨', '🧩', '🎮', '🌟', '🚀', '🦄', '🐻', '🍿', '🎈', '🏆', '🎯', '🌈', '🦖'];
+
 async function createMenu(name, icon) {
   const db = await getDb();
   const row = await db.get(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM menus`);
+  const chosenIcon = icon || MENU_ICON_CHOICES[Math.floor(Math.random() * MENU_ICON_CHOICES.length)];
   const res = await db.run(
     `INSERT INTO menus (name, icon, enabled, sort_order) VALUES (?, ?, 1, ?)`,
-    [name, icon || '📁', row.n]
+    [name, chosenIcon, row.n]
   );
   return res.lastID;
 }
