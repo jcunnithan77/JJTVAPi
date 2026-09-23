@@ -38,6 +38,8 @@ async function triggerTvReload() {
 
 router.get('/admin-api/settings', async (req, res) => res.json(await db.getSettings()));
 
+router.get('/admin-api/audio-playlists', async (req, res) => res.json(await db.getAudioOnlyPlaylists()));
+
 router.post('/admin-api/settings', async (req, res) => {
   for (const [k, v] of Object.entries(req.body || {})) await db.setSetting(k, v);
   await triggerTvReload();

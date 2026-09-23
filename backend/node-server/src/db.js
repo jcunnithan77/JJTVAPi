@@ -807,6 +807,32 @@ async function getCachedPlaylists() {
   `);
 }
 
+const AUDIO_ONLY_EXTENSIONS = new Set(['.mp3', '.m4a', '.aac', '.opus', '.ogg', '.flac', '.wav']);
+
+// Playlists composed ENTIRELY of audio files (e.g. from the Audio-only downloader) - used to
+// filter the pause-lock background music picker down to playlists that make sense there,
+// rather than offering ordinary video playlists whose picture would just be wasted.
+async function getAudioOnlyPlaylists() {
+  const db = await getDb();
+  const rows = await db.all(`SELECT playlist, filename FROM media_cache ORDER BY playlist ASC`);
+  const byPlaylist = new Map();
+  for (const r of rows) {
+    if (!byPlaylist.has(r.playlist)) byPlaylist.set(r.playlist, []);
+    byPlaylist.get(r.playlist).push(r.filename);
+  }
+  const result = [];
+  for (const [playlist, filenames] of byPlaylist) {
+    if (filenames.length === 0) continue;
+    const allAudio = filenames.every(f => {
+      const dot = f.lastIndexOf('.');
+      const ext = dot >= 0 ? f.slice(dot).toLowerCase() : '';
+      return AUDIO_ONLY_EXTENSIONS.has(ext);
+    });
+    if (allAudio) result.push(playlist);
+  }
+  return result;
+}
+
 async function getCachedVideos(playlist) {
   const db = await getDb();
   return await db.all(`
@@ -1405,7 +1431,7 @@ module.exports = {
   initDb, getSettings, setSetting, getOverlay, setOverlay,
   getSchedules, getSchedule, upsertSchedule, deleteSchedule,
   getScheduledDownloads, createScheduledDownload, updateScheduledDownloadStatus, cancelScheduledDownload,
-  updateMediaCache, getCachedPlaylists, getCachedVideos, clearOldCache, searchMediaCache,
+  updateMediaCache, getCachedPlaylists, getCachedVideos, getAudioOnlyPlaylists, clearOldCache, searchMediaCache,
   getVideoPathByHash,
   isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay, getPauseLockStatus,
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
