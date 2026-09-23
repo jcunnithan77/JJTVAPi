@@ -255,7 +255,13 @@ async function getSettings() {
 
 async function setSetting(key, value) {
   const db = await getDb();
-  const storedValue = key === 'timezone' ? String(value) : String(value).toLowerCase();
+  // Only normalize actual boolean flags (compared elsewhere as === 'true'/'false') - lowercasing
+  // every setting unconditionally also mangled free text like lock/sleep messages and, worse,
+  // playlist names (e.g. pause_lock_playlist), which are looked up with a case-sensitive exact
+  // match against the real folder name and would silently fail to find any videos once lowercased.
+  const str = String(value);
+  const lower = str.toLowerCase();
+  const storedValue = (lower === 'true' || lower === 'false') ? lower : str;
   await db.run(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, [key, storedValue]);
 }
 
