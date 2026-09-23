@@ -74,7 +74,8 @@ router.get('/admin-api/schedules', async (req, res) => {
       start_time: row.start_time || '',
       end_time: row.end_time || '',
       cycle_play_minutes: row.cycle_play_minutes || 0,
-      cycle_pause_minutes: row.cycle_pause_minutes || 0
+      cycle_pause_minutes: row.cycle_pause_minutes || 0,
+      is_audio_playlist: row.is_audio_playlist || 0
     };
   }
 
@@ -83,16 +84,22 @@ router.get('/admin-api/schedules', async (req, res) => {
     const cached = await db.getCachedPlaylists();
     for (const p of cached) {
       if (!scheduleMap[p.name]) {
-        scheduleMap[p.name] = { priority: 0, min_duration: 0, watch_limit: 3, mandatory_view: 0, is_blocked: 0, req_ack: 0, min_repeat: 1, max_repeat: 3, start_time: '', end_time: '', cycle_play_minutes: 0, cycle_pause_minutes: 0 };
+        scheduleMap[p.name] = { priority: 0, min_duration: 0, watch_limit: 3, mandatory_view: 0, is_blocked: 0, req_ack: 0, min_repeat: 1, max_repeat: 3, start_time: '', end_time: '', cycle_play_minutes: 0, cycle_pause_minutes: 0, is_audio_playlist: 0 };
       }
     }
   } catch { /* ignore */ }
-  
+
   res.json(scheduleMap);
 });
 
+// Best-effort suggestions (every cached file in the playlist is an audio extension) for
+// pre-checking the Media Manager "Audio playlist" toggle - never authoritative on its own.
+router.get('/admin-api/audio-playlist-suggestions', async (req, res) => {
+  res.json(await db.suggestAudioOnlyPlaylists());
+});
+
 router.post('/admin-api/schedules', async (req, res) => {
-  const { playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat, start_time, end_time, cycle_play_minutes, cycle_pause_minutes } = req.body || {};
+  const { playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat, start_time, end_time, cycle_play_minutes, cycle_pause_minutes, is_audio_playlist } = req.body || {};
   await db.upsertSchedule(
     playlist,
     parseInt(priority || 0),
@@ -106,7 +113,8 @@ router.post('/admin-api/schedules', async (req, res) => {
     start_time || null,
     end_time || null,
     parseInt(cycle_play_minutes || 0),
-    parseInt(cycle_pause_minutes || 0)
+    parseInt(cycle_pause_minutes || 0),
+    parseInt(is_audio_playlist ? 1 : 0)
   );
   await triggerTvReload();
   res.json({ success: true });

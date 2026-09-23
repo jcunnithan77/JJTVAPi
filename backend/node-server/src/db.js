@@ -120,6 +120,10 @@ async function initDb() {
   // unaffected and start_time/end_time are ignored, exactly like before this feature existed.
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN cycle_play_minutes INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE schedules ADD COLUMN cycle_pause_minutes INTEGER DEFAULT 0`); } catch(e) {}
+  // Admin-curated flag: this playlist should appear in the TV app's Music section. Manual
+  // rather than automatic (e.g. "every file in it is an audio extension") so the admin has
+  // precise control over what shows up there, rather than a heuristic risking false positives.
+  try { await db.exec(`ALTER TABLE schedules ADD COLUMN is_audio_playlist INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE daily_playlist_progress ADD COLUMN watched_duration INTEGER DEFAULT 0`); } catch(e) {}
   try { await db.exec(`ALTER TABLE media_cache ADD COLUMN file_created_at INTEGER DEFAULT 0`); } catch(e) {}
 
@@ -276,21 +280,22 @@ async function getSchedule(playlist) {
   return await db.get(`SELECT * FROM schedules WHERE playlist = ?`, [playlist]);
 }
 
-async function upsertSchedule(playlist, priority, minDuration, watchLimit, mandatoryView, isBlocked, reqAck, minRepeat, maxRepeat, startTime, endTime, cyclePlayMinutes, cyclePauseMinutes) {
+async function upsertSchedule(playlist, priority, minDuration, watchLimit, mandatoryView, isBlocked, reqAck, minRepeat, maxRepeat, startTime, endTime, cyclePlayMinutes, cyclePauseMinutes, isAudioPlaylist) {
   const db = await getDb();
   // A play/pause cycle only takes effect when both a window and cyclePlayMinutes are set;
   // otherwise this playlist behaves exactly as if the feature didn't exist.
   const hasWindow = !!(startTime && endTime);
   const hasCycle = hasWindow && cyclePlayMinutes > 0;
   await db.run(
-    `INSERT OR REPLACE INTO schedules (playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat, start_time, end_time, cycle_play_minutes, cycle_pause_minutes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO schedules (playlist, priority, min_duration, watch_limit, mandatory_view, is_blocked, req_ack, min_repeat, max_repeat, start_time, end_time, cycle_play_minutes, cycle_pause_minutes, is_audio_playlist)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       playlist, priority || 0, minDuration || 0, watchLimit || 3, mandatoryView || 0, isBlocked || 0, reqAck || 0, minRepeat || 1, maxRepeat || 3,
       hasWindow ? startTime : null,
       hasWindow ? endTime : null,
       hasCycle ? cyclePlayMinutes : 0,
-      hasCycle ? (cyclePauseMinutes || 0) : 0
+      hasCycle ? (cyclePauseMinutes || 0) : 0,
+      isAudioPlaylist ? 1 : 0
     ]
   );
 }
@@ -834,10 +839,23 @@ async function getCachedPlaylists() {
 
 const AUDIO_ONLY_EXTENSIONS = new Set(['.mp3', '.m4a', '.aac', '.opus', '.ogg', '.flac', '.wav']);
 
-// Playlists composed ENTIRELY of audio files (e.g. from the Audio-only downloader) - used to
-// filter the pause-lock background music picker down to playlists that make sense there,
-// rather than offering ordinary video playlists whose picture would just be wasted.
+// Playlists the admin has explicitly marked as audio (Media Manager's "🎵 Audio playlist"
+// toggle) - used for both the TV app's Music section and the pause-lock background music
+// picker. Deliberately manual rather than an automatic "every file in it is an audio
+// extension" heuristic: that guessed wrong often enough (e.g. a playlist folder that
+// coincidentally only had audio files cached so far, but isn't meant to be a music playlist)
+// that admin control is more reliable.
 async function getAudioOnlyPlaylists() {
+  const db = await getDb();
+  const rows = await db.all(`SELECT playlist FROM schedules WHERE is_audio_playlist = 1 ORDER BY playlist ASC`);
+  return rows.map(r => r.playlist);
+}
+
+// Best-effort suggestion only (every cached file in the playlist has an audio extension) -
+// used solely to pre-check the Media Manager toggle for playlists that look like an obvious
+// fit, saving the admin from having to hunt every one down manually. Never used to decide
+// what actually shows in the Music section - see getAudioOnlyPlaylists() above for that.
+async function suggestAudioOnlyPlaylists() {
   const db = await getDb();
   const rows = await db.all(`SELECT playlist, filename FROM media_cache ORDER BY playlist ASC`);
   const byPlaylist = new Map();
@@ -1458,7 +1476,7 @@ module.exports = {
   initDb, getSettings, setSetting, getOverlay, setOverlay,
   getSchedules, getSchedule, upsertSchedule, deleteSchedule,
   getScheduledDownloads, createScheduledDownload, updateScheduledDownloadStatus, cancelScheduledDownload,
-  updateMediaCache, getCachedPlaylists, getCachedVideos, getAudioOnlyPlaylists, clearOldCache, searchMediaCache,
+  updateMediaCache, getCachedPlaylists, getCachedVideos, getAudioOnlyPlaylists, suggestAudioOnlyPlaylists, clearOldCache, searchMediaCache,
   getVideoPathByHash,
   isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay, getPauseLockStatus,
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
