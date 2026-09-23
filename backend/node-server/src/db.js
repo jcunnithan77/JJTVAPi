@@ -1287,15 +1287,28 @@ async function getPauseLockStatus() {
   // than the single fixed clip bedtime lock uses. The client loops through the whole list
   // rather than one track, since a pause phase can run far longer than any single video.
   // A specific pause step/group can override the global Settings default just for itself
-  // (display.pausingPlaylist); falls back to that default when no override is set.
+  // (display.pausingPlaylist, always a single playlist); falls back to that default when no
+  // override is set. The Settings default can be several playlists at once - stored as a
+  // JSON array - whose tracks are all concatenated into one combined background list; an
+  // older plain-string value (pre-multi-select) is treated as a single-item selection.
   let audioPlaylist = [];
   const settings = await getSettings();
-  const playlistName = display.pausingPlaylist || settings.pause_lock_playlist || '';
-  if (playlistName) {
-    const videos = await getCachedVideos(playlistName);
+  const playlistSetting = display.pausingPlaylist || settings.pause_lock_playlist || '';
+  let playlistNames = [];
+  if (playlistSetting) {
+    try {
+      const parsed = JSON.parse(playlistSetting);
+      playlistNames = Array.isArray(parsed) ? parsed : [playlistSetting];
+    } catch (e) {
+      playlistNames = [playlistSetting];
+    }
+  }
+  for (const name of playlistNames) {
+    if (!name) continue;
+    const videos = await getCachedVideos(name);
     // Titled (not just bare URLs) so the pause screen can show a real track list to pick
     // from, rather than just auto-looping blindly through the whole playlist.
-    audioPlaylist = videos.map(v => ({ title: v.title || v.filename, url: `/stream/hash/${v.vhash}` }));
+    audioPlaylist.push(...videos.map(v => ({ title: v.title || v.filename, url: `/stream/hash/${v.vhash}` })));
   }
 
   return { locked: true, message, audio: '', image: '', audioPlaylist, remainingMs: display.pausingRemainingMs };
