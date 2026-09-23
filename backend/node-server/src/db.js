@@ -1184,13 +1184,6 @@ async function getPlaylistsForDisplay() {
     }
   }
 
-  if (forced.size > 0) {
-    const notBlocked = [...forced].filter(p => !blockedNames.some(b => p === b || p.startsWith(b + '/')));
-    if (notBlocked.length > 0) {
-      return { mode: 'priority', playlists: notBlocked, blocked: blockedNames, nextPauseMs };
-    }
-  }
-
   const activePlaylists = [];
   const minDurationMap = {};
 
@@ -1200,10 +1193,10 @@ async function getPlaylistsForDisplay() {
     minDurationMap[s.playlist] = s.min_duration || 0;
   }
 
-  if (activePlaylists.length === 0) {
-    return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing, pausingPlaylist, pausingRemainingMs };
-  }
-
+  // Computed up front (rather than only in the non-forced path below) so a playlist's own
+  // daily quota is still honored even when a Rotation Group is also forcing it "on" - a
+  // playlist being a group member shouldn't let the group override that playlist's own
+  // schedule settings once they're already satisfied for the day.
   const completionRows = await db.all(
     `SELECT playlist, completed, watched_duration FROM daily_playlist_progress WHERE date = ?`,
     [today]
@@ -1229,6 +1222,26 @@ async function getPlaylistsForDisplay() {
     } else if (minDur > 0 && totalWatched >= minDur * 60) {
       completedSet.add(scheduledPlaylist);
     }
+  }
+
+  if (forced.size > 0) {
+    const eligible = [...forced].filter(p => {
+      if (blockedNames.some(b => p === b || p.startsWith(b + '/'))) return false;
+      // Only a playlist with its own quota configured can be "done for the day" - one with
+      // none set has nothing of its own to obey, so the group's forcing still applies.
+      if ((minDurationMap[p] || 0) > 0 && completedSet.has(p)) return false;
+      return true;
+    });
+    if (eligible.length > 0) {
+      return { mode: 'priority', playlists: eligible, blocked: blockedNames, nextPauseMs };
+    }
+    // Every forced playlist already met its own daily quota - fall through to normal
+    // scheduling below instead of force-repeating content the playlist's own settings
+    // say is done for today.
+  }
+
+  if (activePlaylists.length === 0) {
+    return { mode: 'fallback', playlists: null, blocked: blockedNames, pausing: anyPausing, pausingPlaylist, pausingRemainingMs };
   }
 
   const pending = activePlaylists.filter(p => !completedSet.has(p));
