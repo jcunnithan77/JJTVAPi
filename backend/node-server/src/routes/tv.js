@@ -195,6 +195,9 @@ router.get('/api/playlists', async (req, res) => {
   try {
     const displayInfo = await db.getPlaylistsForDisplay();
     const cached = await db.getCachedPlaylists();
+    // Admin-marked audio playlists live in the Music section (see /api/audio-playlists
+    // below) - keep them out of the main video library so they don't show in both places.
+    const audioNames = new Set(await db.getAudioOnlyPlaylists());
     const result = [];
 
     function isAllowed(name) {
@@ -212,8 +215,9 @@ router.get('/api/playlists', async (req, res) => {
       }
       return true;
     }
-    
+
     for (const p of cached) {
+      if (audioNames.has(p.name)) continue;
       if (!isAllowed(p.name)) continue;
 
       const itemPath = path.join(MEDIA_PATH, p.name);
