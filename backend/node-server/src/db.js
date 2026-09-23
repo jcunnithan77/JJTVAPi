@@ -1277,10 +1277,17 @@ const PAUSE_MESSAGES = [
 // separate from isSystemAsleep() (rather than folded into it) since that function has
 // several early-return branches this shouldn't have to thread through, and because bedtime
 // should always win if both are somehow true at once - callers check isSystemAsleep() first.
+// How long each pause message/emoji stays up before rotating to the next one.
+const PAUSE_MESSAGE_ROTATE_MS = 12000;
+
 async function getPauseLockStatus() {
   const display = await getPlaylistsForDisplay();
   if (!display.pausing) return false;
-  const message = PAUSE_MESSAGES[Math.floor(Math.random() * PAUSE_MESSAGES.length)];
+  // Picking randomly on every poll (the TV app polls /api/status every 5s) meant the message
+  // could re-roll to something new - or flicker back to the same one - on every single poll,
+  // instead of holding steady and then rotating. Deriving the index from the current time
+  // instead makes it hold for a fixed window and cycle through all of them in order.
+  const message = PAUSE_MESSAGES[Math.floor(Date.now() / PAUSE_MESSAGE_ROTATE_MS) % PAUSE_MESSAGES.length];
 
   // Admin can pick an existing playlist to keep playing in the background - just the audio,
   // since the lock screen itself covers the video - for as long as the pause lasts, rather
