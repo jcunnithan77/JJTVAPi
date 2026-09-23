@@ -314,7 +314,7 @@ router.get('/api/menus', async (req, res) => {
   if (await db.isSystemAsleep()) return res.json([]);
   try {
     const menus = await db.getMenus();
-    res.json(menus.filter(m => m.enabled).map(m => ({ id: m.id, name: m.name, icon: m.icon })));
+    res.json(menus.filter(m => m.enabled).map(m => ({ id: m.id, name: m.name, icon: m.icon, type: m.type || 'video' })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

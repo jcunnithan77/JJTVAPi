@@ -202,6 +202,10 @@ async function initDb() {
       PRIMARY KEY (menu_id, playlist)
     )
   `);
+  // Explicit content type rather than guessing per-file: a 'video' menu browses/plays like
+  // the main Library (grid, tap opens the full-screen player); an 'audio' menu behaves like
+  // Music (list, autoplay in place with the wave visual).
+  try { await db.exec(`ALTER TABLE menus ADD COLUMN type TEXT DEFAULT 'video'`); } catch(e) {}
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS force_lock_profiles (
@@ -1376,13 +1380,13 @@ async function getMenuLockStatus(menuId) {
 // glance in both the admin panel and the TV app's nav row.
 const MENU_ICON_CHOICES = ['🎬', '🎵', '📚', '🎨', '🧩', '🎮', '🌟', '🚀', '🦄', '🐻', '🍿', '🎈', '🏆', '🎯', '🌈', '🦖'];
 
-async function createMenu(name, icon) {
+async function createMenu(name, icon, type) {
   const db = await getDb();
   const row = await db.get(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM menus`);
   const chosenIcon = icon || MENU_ICON_CHOICES[Math.floor(Math.random() * MENU_ICON_CHOICES.length)];
   const res = await db.run(
-    `INSERT INTO menus (name, icon, enabled, sort_order) VALUES (?, ?, 1, ?)`,
-    [name, chosenIcon, row.n]
+    `INSERT INTO menus (name, icon, enabled, sort_order, type) VALUES (?, ?, 1, ?, ?)`,
+    [name, chosenIcon, row.n, type === 'audio' ? 'audio' : 'video']
   );
   return res.lastID;
 }
@@ -1412,11 +1416,11 @@ async function getMenus() {
   return menus;
 }
 
-async function updateMenu(id, { name, icon, enabled, rotation_group_id }) {
+async function updateMenu(id, { name, icon, enabled, rotation_group_id, type }) {
   const db = await getDb();
   await db.run(
-    `UPDATE menus SET name = ?, icon = ?, enabled = ?, rotation_group_id = ? WHERE id = ?`,
-    [name, icon || '📁', enabled ? 1 : 0, rotation_group_id || null, id]
+    `UPDATE menus SET name = ?, icon = ?, enabled = ?, rotation_group_id = ?, type = ? WHERE id = ?`,
+    [name, icon || '📁', enabled ? 1 : 0, rotation_group_id || null, type === 'audio' ? 'audio' : 'video', id]
   );
 }
 

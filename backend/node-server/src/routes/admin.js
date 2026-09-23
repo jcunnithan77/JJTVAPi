@@ -261,21 +261,22 @@ router.get('/admin-api/menus', async (req, res) => {
 });
 
 router.post('/admin-api/menus', async (req, res) => {
-  const { name } = req.body || {};
+  const { name, type } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
-  const id = await db.createMenu(name.trim());
+  const id = await db.createMenu(name.trim(), undefined, type);
   res.json({ success: true, id });
 });
 
 router.post('/admin-api/menus/:id', async (req, res) => {
-  const { name, icon, enabled, rotation_group_id, playlists } = req.body || {};
+  const { name, icon, enabled, rotation_group_id, type, playlists } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
   const id = parseInt(req.params.id);
   await db.updateMenu(id, {
     name: name.trim(),
     icon: icon || '📁',
     enabled: !!enabled,
-    rotation_group_id: rotation_group_id ? parseInt(rotation_group_id) : null
+    rotation_group_id: rotation_group_id ? parseInt(rotation_group_id) : null,
+    type
   });
   if (Array.isArray(playlists)) {
     await db.setMenuPlaylists(id, playlists);
