@@ -58,7 +58,10 @@ async function _doDownload(jobId, url, playlist, mediaPath, audioOnly = false) {
     '--audio-format', 'mp3',
     '--audio-quality', '0',
     '--no-check-certificate',
-    '-o', path.join(targetDir, '%(uploader|Unknown)s', '%(playlist_title|Misc)s', '%(id)s.%(ext)s'),
+    // Every download always runs with --no-playlist below (single video only), so
+    // uploader/playlist_title were never meaningful here - they just added two layers of
+    // useless nested folders under the destination the admin already picked.
+    '-o', path.join(targetDir, '%(id)s.%(ext)s'),
     '--write-thumbnail',
     '--convert-thumbnails', 'jpg',
     '--write-info-json',
@@ -73,7 +76,7 @@ async function _doDownload(jobId, url, playlist, mediaPath, audioOnly = false) {
     '-f', 'bestvideo[ext=mp4][vcodec^=avc]+bestaudio[ext=m4a]/best[ext=mp4]/best',
     '--merge-output-format', 'mp4',
     '--no-check-certificate',
-    '-o', path.join(targetDir, '%(uploader|Unknown)s', '%(playlist_title|Misc)s', '%(id)s.%(ext)s'),
+    '-o', path.join(targetDir, '%(id)s.%(ext)s'),
     '--write-thumbnail',
     '--convert-thumbnails', 'jpg',
     '--write-info-json',

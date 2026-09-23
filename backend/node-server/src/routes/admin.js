@@ -845,6 +845,70 @@ router.post('/admin-api/media/rename-playlist', async (req, res) => {
   }
 });
 
+// Collapses a playlist folder that ended up with extra nesting underneath it (e.g. the
+// downloader's old uploader/playlist-title subfolders, or any other accidental sub-folders)
+// down to just that one folder - every file found anywhere below it is moved up directly
+// under it, then the emptied sub-folders are removed. An admin-triggered, opt-in cleanup
+// (not automatic) since sub-folders can also be intentional playlist categories.
+router.post('/admin-api/media/flatten-folder', async (req, res) => {
+  const { playlist } = req.body || {};
+  if (!playlist) return res.status(400).json({ error: 'Missing parameters' });
+
+  const dir = path.join(MEDIA_PATH, playlist);
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    return res.status(404).json({ error: 'Folder not found' });
+  }
+
+  try {
+    // Collect every file at any depth below dir (excluding ones already directly in it).
+    const filesToMove = [];
+    function walk(current) {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (current !== dir) {
+          filesToMove.push(full);
+        }
+      }
+    }
+    walk(dir);
+
+    const usedNames = new Set(fs.readdirSync(dir).filter(f => fs.statSync(path.join(dir, f)).isFile()));
+    let moved = 0;
+    for (const oldPath of filesToMove) {
+      let name = path.basename(oldPath);
+      if (usedNames.has(name)) {
+        const ext = path.extname(name);
+        const base = path.basename(name, ext);
+        let n = 2;
+        while (usedNames.has(`${base} (${n})${ext}`)) n++;
+        name = `${base} (${n})${ext}`;
+      }
+      fs.renameSync(oldPath, path.join(dir, name));
+      usedNames.add(name);
+      moved++;
+    }
+
+    // Remove now-empty sub-directories (deepest first).
+    function removeEmptyDirs(current) {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        if (entry.isDirectory()) removeEmptyDirs(path.join(current, entry.name));
+      }
+      if (current !== dir && fs.readdirSync(current).length === 0) {
+        fs.rmdirSync(current);
+      }
+    }
+    removeEmptyDirs(dir);
+
+    await scanAll(MEDIA_PATH);
+    await triggerTvReload();
+    res.json({ success: true, moved });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post('/admin-api/media/rename-video', async (req, res) => {
   const { playlist, oldFilename, newFilename } = req.body || {};
   if (!playlist || !oldFilename || !newFilename) return res.status(400).json({ error: 'Missing parameters' });
