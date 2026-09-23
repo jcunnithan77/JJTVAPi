@@ -304,16 +304,72 @@ router.get('/api/audio-playlists', async (req, res) => {
   }
 });
 
-router.get('/api/playlists/:id(*)', async (req, res) => {
-  const playlistId = req.params.id;
-  console.log(`[TV-API] GET /api/playlists/${playlistId} from ${req.ip}`);
-
-
-  if (await db.isSystemAsleep() || !await db.isPlaylistAllowed(playlistId)) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
+// Custom admin-created TV menus (a generalization of the Music section): each has its own
+// manually-assigned playlists and, optionally, its own bound Rotation Group governing ONLY
+// that menu's lock state (see getMenuLockStatus in db.js). Deliberately NOT gated by
+// getPlaylistsForDisplay()'s whole-app forced/pausing mode - the point of a menu is that its
+// accessibility is independent of every other menu/group - but a hard admin block
+// (is_blocked) and bedtime still apply, same as everywhere else.
+router.get('/api/menus', async (req, res) => {
+  if (await db.isSystemAsleep()) return res.json([]);
   try {
+    const menus = await db.getMenus();
+    res.json(menus.filter(m => m.enabled).map(m => ({ id: m.id, name: m.name, icon: m.icon })));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/api/menus/:id/playlists', async (req, res) => {
+  if (await db.isSystemAsleep()) return res.json([]);
+  try {
+    const menus = await db.getMenus();
+    const menu = menus.find(m => m.id === parseInt(req.params.id) && m.enabled);
+    if (!menu) return res.status(404).json({ error: 'Menu not found' });
+
+    const schedules = await db.getSchedules();
+    const blockedNames = schedules.filter(s => s.is_blocked === 1).map(s => s.playlist);
+    const cached = await db.getCachedPlaylists();
+    const result = [];
+    for (const p of cached) {
+      if (!menu.playlists.includes(p.name)) continue;
+      if (blockedNames.some(b => p.name === b || p.name.startsWith(b + '/'))) continue;
+      const itemPath = path.join(MEDIA_PATH, p.name);
+      const thumb = getThumbnail(itemPath);
+      result.push({
+        id: p.name,
+        name: p.name,
+        count: p.count,
+        thumbnail: thumb ? `/images/${encodeURIComponent(p.name)}/${encodeURIComponent(thumb)}` : null
+      });
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Polled while a menu screen is open, separate from /api/status - a menu's lock is entirely
+// its own bound group's concern, not the app-wide pause/bedtime lock.
+router.get('/api/menus/:id/status', async (req, res) => {
+  try {
+    const status = await db.getMenuLockStatus(parseInt(req.params.id));
+    res.json({
+      locked: !!status.locked,
+      message: status.message || '',
+      audioPlaylist: status.audioPlaylist || [],
+      remaining_ms: status.remainingMs ?? null
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Shared by both the main /api/playlists/:id(*) route (gated by the whole-app schedule/
+// rotation state) and the menu-scoped route below (gated only by that menu's own lock) -
+// building the actual video list/quota response is identical either way, only the access
+// check leading up to it differs.
+async function buildPlaylistResponse(playlistId) {
     let videos = [];
     if (playlistId === 'Live' && db.getLiveStreams) {
       const streams = await db.getLiveStreams();
@@ -416,18 +472,57 @@ router.get('/api/playlists/:id(*)', async (req, res) => {
       };
     });
 
-    res.json({ 
-      id: playlistId, 
-      name: playlistId, 
-      videos: videoList, 
-      mandatory_view: isMandatory, 
+    return {
+      id: playlistId,
+      name: playlistId,
+      videos: videoList,
+      mandatory_view: isMandatory,
       notification: remainingTimeMsg,
       remaining_mandatory_seconds: remainingSecsInt,
       req_ack: reqAck,
       min_repeat: minRepeat,
       max_repeat: maxRepeat,
       acknowledged: isAcknowledged
-    });
+    };
+}
+
+router.get('/api/playlists/:id(*)', async (req, res) => {
+  const playlistId = req.params.id;
+  console.log(`[TV-API] GET /api/playlists/${playlistId} from ${req.ip}`);
+
+  if (await db.isSystemAsleep() || !await db.isPlaylistAllowed(playlistId)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    res.json(await buildPlaylistResponse(playlistId));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Menu-scoped video fetch: deliberately bypasses isPlaylistAllowed()'s whole-app forced/
+// pausing check (that's what /api/playlists/:id(*) above uses) - a menu's own bound
+// Rotation Group (via /api/menus/:id/status) is the only thing that should gate it, so an
+// unrelated group's pause phase never blocks a menu that isn't part of it. Still respects a
+// hard admin block and bedtime, and requires the playlist to actually belong to this menu.
+router.get('/api/menus/:menuId/videos/:name(*)', async (req, res) => {
+  const menuId = parseInt(req.params.menuId);
+  const playlistId = req.params.name;
+
+  if (await db.isSystemAsleep()) return res.status(403).json({ error: 'Forbidden' });
+
+  try {
+    const menus = await db.getMenus();
+    const menu = menus.find(m => m.id === menuId && m.enabled);
+    if (!menu || !menu.playlists.includes(playlistId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const schedule = await db.getSchedule(playlistId);
+    if (schedule && schedule.is_blocked === 1) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    res.json(await buildPlaylistResponse(playlistId));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

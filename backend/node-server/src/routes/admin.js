@@ -254,6 +254,42 @@ router.post('/admin-api/rotation/groups/:id/window', async (req, res) => {
   res.json({ success: true });
 });
 
+// --- Custom TV-app Menus (generalized Music-section-style nav entries) ---
+
+router.get('/admin-api/menus', async (req, res) => {
+  res.json(await db.getMenus());
+});
+
+router.post('/admin-api/menus', async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  const id = await db.createMenu(name.trim(), '📁');
+  res.json({ success: true, id });
+});
+
+router.post('/admin-api/menus/:id', async (req, res) => {
+  const { name, icon, enabled, rotation_group_id, playlists } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  const id = parseInt(req.params.id);
+  await db.updateMenu(id, {
+    name: name.trim(),
+    icon: icon || '📁',
+    enabled: !!enabled,
+    rotation_group_id: rotation_group_id ? parseInt(rotation_group_id) : null
+  });
+  if (Array.isArray(playlists)) {
+    await db.setMenuPlaylists(id, playlists);
+  }
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
+router.delete('/admin-api/menus/:id', async (req, res) => {
+  await db.deleteMenu(parseInt(req.params.id));
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
 router.post('/admin-api/rotation/steps/:stepId/mandatory', async (req, res) => {
   const { mandatory } = req.body || {};
   await db.setStepMandatory(parseInt(req.params.stepId), !!mandatory);

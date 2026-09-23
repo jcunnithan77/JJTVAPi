@@ -180,6 +180,29 @@ async function initDb() {
     }
   } catch(e) {}
 
+  // Custom TV-app menus (a generalization of the Music section): an admin-named, admin-
+  // enabled nav entry with its own manually-assigned playlists and an optional bound
+  // Rotation Group whose play/pause status locks ONLY that menu - independent of every
+  // other menu and of the old whole-app lock, so e.g. a video rotation's mandatory break
+  // doesn't also interrupt a Music-style menu that isn't part of it.
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS menus (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      icon TEXT DEFAULT '📁',
+      enabled INTEGER DEFAULT 1,
+      rotation_group_id INTEGER,
+      sort_order INTEGER DEFAULT 0
+    )
+  `);
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS menu_playlists (
+      menu_id INTEGER NOT NULL,
+      playlist TEXT NOT NULL,
+      PRIMARY KEY (menu_id, playlist)
+    )
+  `);
+
   await db.exec(`
     CREATE TABLE IF NOT EXISTS force_lock_profiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1280,27 +1303,21 @@ const PAUSE_MESSAGES = [
 // How long each pause message/emoji stays up before rotating to the next one.
 const PAUSE_MESSAGE_ROTATE_MS = 12000;
 
-async function getPauseLockStatus() {
-  const display = await getPlaylistsForDisplay();
-  if (!display.pausing) return false;
-  // Picking randomly on every poll (the TV app polls /api/status every 5s) meant the message
+function _currentPauseMessage() {
+  // Picking randomly on every poll (the TV app polls status every 5s) meant the message
   // could re-roll to something new - or flicker back to the same one - on every single poll,
   // instead of holding steady and then rotating. Deriving the index from the current time
   // instead makes it hold for a fixed window and cycle through all of them in order.
-  const message = PAUSE_MESSAGES[Math.floor(Date.now() / PAUSE_MESSAGE_ROTATE_MS) % PAUSE_MESSAGES.length];
+  return PAUSE_MESSAGES[Math.floor(Date.now() / PAUSE_MESSAGE_ROTATE_MS) % PAUSE_MESSAGES.length];
+}
 
-  // Admin can pick an existing playlist to keep playing in the background - just the audio,
-  // since the lock screen itself covers the video - for as long as the pause lasts, rather
-  // than the single fixed clip bedtime lock uses. The client loops through the whole list
-  // rather than one track, since a pause phase can run far longer than any single video.
-  // A specific pause step/group can override the global Settings default just for itself
-  // (display.pausingPlaylist, always a single playlist); falls back to that default when no
-  // override is set. The Settings default can be several playlists at once - stored as a
-  // JSON array - whose tracks are all concatenated into one combined background list; an
-  // older plain-string value (pre-multi-select) is treated as a single-item selection.
-  let audioPlaylist = [];
-  const settings = await getSettings();
-  const playlistSetting = display.pausingPlaylist || settings.pause_lock_playlist || '';
+// Admin can pick an existing playlist (or several) to keep playing in the background - just
+// the audio, since the lock screen itself covers the video - for as long as a pause lasts.
+// `override` is a single-playlist pause/group-specific value that takes precedence over the
+// global Settings default when set. Either can be a JSON array (multi-select) or an older
+// plain-string value (pre-multi-select, treated as a single-item selection).
+async function _resolvePauseAudioPlaylist(override, globalDefault) {
+  const playlistSetting = override || globalDefault || '';
   let playlistNames = [];
   if (playlistSetting) {
     try {
@@ -1310,6 +1327,7 @@ async function getPauseLockStatus() {
       playlistNames = [playlistSetting];
     }
   }
+  const audioPlaylist = [];
   for (const name of playlistNames) {
     if (!name) continue;
     const videos = await getCachedVideos(name);
@@ -1317,8 +1335,83 @@ async function getPauseLockStatus() {
     // from, rather than just auto-looping blindly through the whole playlist.
     audioPlaylist.push(...videos.map(v => ({ title: v.title || v.filename, url: `/stream/hash/${v.vhash}` })));
   }
+  return audioPlaylist;
+}
 
-  return { locked: true, message, audio: '', image: '', audioPlaylist, remainingMs: display.pausingRemainingMs };
+async function getPauseLockStatus() {
+  const display = await getPlaylistsForDisplay();
+  if (!display.pausing) return false;
+  const settings = await getSettings();
+  const audioPlaylist = await _resolvePauseAudioPlaylist(display.pausingPlaylist, settings.pause_lock_playlist);
+  return { locked: true, message: _currentPauseMessage(), audio: '', image: '', audioPlaylist, remainingMs: display.pausingRemainingMs };
+}
+
+// Per-menu lock status: a menu with no bound Rotation Group is never locked by this
+// mechanism at all - it's just a plain playlist listing. A bound group's own play/pause
+// cycle governs ONLY this menu, independent of every other menu and of the old whole-app
+// pause lock, so unrelated content (e.g. a video rotation's mandatory break) never bleeds
+// into a menu that isn't part of that group.
+async function getMenuLockStatus(menuId) {
+  const db = await getDb();
+  const menu = await db.get(`SELECT * FROM menus WHERE id = ?`, [menuId]);
+  if (!menu || !menu.rotation_group_id) return { locked: false };
+
+  const groups = await getRotationGroups();
+  const group = groups.find(g => g.id === menu.rotation_group_id);
+  if (!group) return { locked: false };
+
+  const now = await getNowInConfiguredTimezone();
+  const nowM = now.getHours() * 60 + now.getMinutes();
+  const groupPlaylistsById = await _playlistGroupLookup();
+  const status = _computeGroupStatus(group, now, nowM, groupPlaylistsById);
+  if (status.mode !== 'pause') return { locked: false };
+
+  const settings = await getSettings();
+  const audioPlaylist = await _resolvePauseAudioPlaylist(status.pausePlaylist, settings.pause_lock_playlist);
+  return { locked: true, message: _currentPauseMessage(), audioPlaylist, remainingMs: status.remainingMs };
+}
+
+async function createMenu(name, icon) {
+  const db = await getDb();
+  const row = await db.get(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM menus`);
+  const res = await db.run(
+    `INSERT INTO menus (name, icon, enabled, sort_order) VALUES (?, ?, 1, ?)`,
+    [name, icon || '📁', row.n]
+  );
+  return res.lastID;
+}
+
+async function getMenus() {
+  const db = await getDb();
+  const menus = await db.all(`SELECT * FROM menus ORDER BY sort_order ASC, id ASC`);
+  const playlistRows = await db.all(`SELECT menu_id, playlist FROM menu_playlists`);
+  for (const m of menus) {
+    m.playlists = playlistRows.filter(p => p.menu_id === m.id).map(p => p.playlist);
+  }
+  return menus;
+}
+
+async function updateMenu(id, { name, icon, enabled, rotation_group_id }) {
+  const db = await getDb();
+  await db.run(
+    `UPDATE menus SET name = ?, icon = ?, enabled = ?, rotation_group_id = ? WHERE id = ?`,
+    [name, icon || '📁', enabled ? 1 : 0, rotation_group_id || null, id]
+  );
+}
+
+async function setMenuPlaylists(menuId, playlists) {
+  const db = await getDb();
+  await db.run(`DELETE FROM menu_playlists WHERE menu_id = ?`, [menuId]);
+  for (const p of playlists) {
+    if (!p) continue;
+    await db.run(`INSERT OR IGNORE INTO menu_playlists (menu_id, playlist) VALUES (?, ?)`, [menuId, p]);
+  }
+}
+
+async function deleteMenu(id) {
+  const db = await getDb();
+  await db.run(`DELETE FROM menu_playlists WHERE menu_id = ?`, [id]);
+  await db.run(`DELETE FROM menus WHERE id = ?`, [id]);
 }
 
 async function isPlaylistAllowed(name) {
@@ -1518,6 +1611,7 @@ module.exports = {
   updateMediaCache, getCachedPlaylists, getCachedVideos, getAudioOnlyPlaylists, suggestAudioOnlyPlaylists, clearOldCache, searchMediaCache,
   getVideoPathByHash,
   isSystemAsleep, isPlaylistAllowed, getPlaylistsForDisplay, getPauseLockStatus,
+  getMenuLockStatus, createMenu, getMenus, updateMenu, setMenuPlaylists, deleteMenu,
   getLockProfiles, getLockProfile, upsertLockProfile, deleteLockProfile,
   recordVideoWatch, demoteVideo, getPlaylistWatchLog, resetPlaylistWatchLog, markPlaylistCompleted,
   clearDailyProgress, getPlaylistProgress, addPlaylistProgress,
