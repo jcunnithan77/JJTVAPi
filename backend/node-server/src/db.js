@@ -1391,8 +1391,23 @@ async function getMenus() {
   const db = await getDb();
   const menus = await db.all(`SELECT * FROM menus ORDER BY sort_order ASC, id ASC`);
   const playlistRows = await db.all(`SELECT menu_id, playlist FROM menu_playlists`);
+  // A menu bound to a Rotation Group pulls its playlists automatically from that group's
+  // steps - no manual per-playlist selection needed, and it stays in sync as the group's
+  // steps change. manualPlaylists (the raw menu_playlists rows) is preserved separately so
+  // nothing is lost if the admin later unbinds the group and goes back to hand-picking.
+  const rotationGroups = await getRotationGroups();
+  const groupPlaylistsById = await _playlistGroupLookup();
   for (const m of menus) {
-    m.playlists = playlistRows.filter(p => p.menu_id === m.id).map(p => p.playlist);
+    const manualPlaylists = playlistRows.filter(p => p.menu_id === m.id).map(p => p.playlist);
+    m.manualPlaylists = manualPlaylists;
+    if (m.rotation_group_id) {
+      const group = rotationGroups.find(g => g.id === m.rotation_group_id);
+      m.playlists = group
+        ? [...new Set((group.steps || []).flatMap(s => _stepPlaylists(s, groupPlaylistsById)))]
+        : manualPlaylists;
+    } else {
+      m.playlists = manualPlaylists;
+    }
   }
   return menus;
 }
