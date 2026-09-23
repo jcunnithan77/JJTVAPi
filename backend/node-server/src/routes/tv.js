@@ -253,6 +253,52 @@ router.get('/api/playlists', async (req, res) => {
   }
 });
 
+// Playlists made entirely of audio files (e.g. from the Audio-only downloader), for the TV
+// app's separate Music section - same schedule/block/sleep gating as the main video library,
+// so admin-configured rules still apply to music, just filtered down to audio-only playlists.
+router.get('/api/audio-playlists', async (req, res) => {
+  console.log(`[TV-API] GET /api/audio-playlists from ${req.ip}`);
+  if (await db.isSystemAsleep()) return res.json([]);
+
+  try {
+    const displayInfo = await db.getPlaylistsForDisplay();
+    const audioNames = new Set(await db.getAudioOnlyPlaylists());
+    const cached = await db.getCachedPlaylists();
+    const result = [];
+
+    function isAllowed(name) {
+      if (displayInfo.blocked && displayInfo.blocked.some(b => name === b || name.startsWith(b + '/'))) return false;
+      if (displayInfo.mode === 'all') return true;
+      if (displayInfo.mode === 'priority') {
+        return displayInfo.playlists.some(p => name === p || name.startsWith(p + '/'));
+      }
+      if (displayInfo.excludeScheduled) {
+        for (const ex of displayInfo.excludeScheduled) {
+          if (name === ex || name.startsWith(ex + '/')) return false;
+        }
+      }
+      return true;
+    }
+
+    for (const p of cached) {
+      if (!audioNames.has(p.name)) continue;
+      if (!isAllowed(p.name)) continue;
+
+      const itemPath = path.join(MEDIA_PATH, p.name);
+      const thumb = getThumbnail(itemPath);
+      result.push({
+        id: p.name,
+        name: p.name,
+        count: p.count,
+        thumbnail: thumb ? `/images/${encodeURIComponent(p.name)}/${encodeURIComponent(thumb)}` : null
+      });
+    }
+
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 router.get('/api/playlists/:id(*)', async (req, res) => {
   const playlistId = req.params.id;

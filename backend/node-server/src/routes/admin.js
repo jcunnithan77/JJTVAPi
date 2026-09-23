@@ -239,6 +239,13 @@ router.post('/admin-api/rotation/groups/:id/pause-playlist', async (req, res) =>
   res.json({ success: true });
 });
 
+router.post('/admin-api/rotation/groups/:id/window', async (req, res) => {
+  const { start_time, end_time } = req.body || {};
+  await db.setGroupWindow(parseInt(req.params.id), start_time, end_time);
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
 router.post('/admin-api/rotation/steps/:stepId/mandatory', async (req, res) => {
   const { mandatory } = req.body || {};
   await db.setStepMandatory(parseInt(req.params.stepId), !!mandatory);

@@ -153,6 +153,12 @@ async function initDb() {
   // overriding the global Settings -> Pause-Time Background Music default just for it.
   try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN pause_playlist TEXT`); } catch(e) {}
   try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN pause_playlist TEXT`); } catch(e) {}
+  // Daily active-hours window for a whole group (independent of day_mode's day-of-week
+  // scope) - outside it the group is simply off, same as a wrong day. Deliberately no SQL
+  // DEFAULT here so pre-existing groups stay unrestricted (24h) after this migration;
+  // createRotationGroup() sets 08:00-22:00 explicitly for newly created groups only.
+  try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN start_time TEXT`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE rotation_groups ADD COLUMN end_time TEXT`); } catch(e) {}
   try {
     // One-time migration: wrap any pre-existing flat (ungrouped) rotation steps,
     // plus the old global rotation_enabled/rotation_started_at settings, into a "Default" group.
@@ -385,10 +391,17 @@ function _stepPlaylists(step, groupPlaylistsById) {
 // any step that targets a Playlist Group rather than a single playlist.
 function _computeGroupStatus(group, now, nowM, groupPlaylistsById) {
   const steps = group.steps || [];
-  const base = { groupId: group.id, name: group.name, enabled: group.enabled, steps, dayMode: group.day_mode || 'all', days: group.days || [], todayDate: group.today_date || null, groupMode: group.mode || 'sequential' };
+  const base = { groupId: group.id, name: group.name, enabled: group.enabled, steps, dayMode: group.day_mode || 'all', days: group.days || [], todayDate: group.today_date || null, groupMode: group.mode || 'sequential', startTime: group.start_time || null, endTime: group.end_time || null };
 
   if (!_isGroupActiveToday(group, now)) {
     return { ...base, mode: 'off', reason: 'wrong-day' };
+  }
+
+  // Daily active-hours window, independent of (and in addition to) the day-of-week scope
+  // above - a group with no window set (start_time/end_time both null) is unrestricted, same
+  // as before this feature existed.
+  if (!_inClockWindow(group.start_time, group.end_time, nowM)) {
+    return { ...base, mode: 'off', reason: 'outside-window' };
   }
 
   if (!group.enabled || steps.length === 0) {
@@ -493,6 +506,8 @@ async function getRotationGroups() {
     cycle_play_minutes: g.cycle_play_minutes || 0,
     cycle_pause_minutes: g.cycle_pause_minutes || 0,
     pause_playlist: g.pause_playlist || null,
+    start_time: g.start_time || null,
+    end_time: g.end_time || null,
     steps: steps.filter(s => s.group_id === g.id)
   }));
 }
@@ -530,11 +545,21 @@ async function setGroupSchedule(groupId, dayMode, days) {
 async function createRotationGroup(name) {
   const db = await getDb();
   const row = await db.get(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM rotation_groups`);
+  // New groups default to an 8am-10pm active window (adjustable/clearable afterward) -
+  // pre-existing groups from before this feature stay unrestricted (see the migration above).
   const result = await db.run(
-    `INSERT INTO rotation_groups (name, enabled, started_at, sort_order) VALUES (?, 0, 0, ?)`,
+    `INSERT INTO rotation_groups (name, enabled, started_at, sort_order, start_time, end_time) VALUES (?, 0, 0, ?, '08:00', '22:00')`,
     [name || 'New Group', row.next]
   );
   return result.lastID;
+}
+
+// Sets (or clears, passing '') the group's daily active-hours window.
+async function setGroupWindow(groupId, startTime, endTime) {
+  const db = await getDb();
+  const start = startTime && startTime.trim() ? startTime.trim() : null;
+  const end = endTime && endTime.trim() ? endTime.trim() : null;
+  await db.run(`UPDATE rotation_groups SET start_time = ?, end_time = ? WHERE id = ?`, [start, end, groupId]);
 }
 
 async function renameRotationGroup(groupId, name) {
@@ -1231,7 +1256,9 @@ async function getPauseLockStatus() {
   const playlistName = display.pausingPlaylist || settings.pause_lock_playlist || '';
   if (playlistName) {
     const videos = await getCachedVideos(playlistName);
-    audioPlaylist = videos.map(v => `/stream/hash/${v.vhash}`);
+    // Titled (not just bare URLs) so the pause screen can show a real track list to pick
+    // from, rather than just auto-looping blindly through the whole playlist.
+    audioPlaylist = videos.map(v => ({ title: v.title || v.filename, url: `/stream/hash/${v.vhash}` }));
   }
 
   return { locked: true, message, audio: '', image: '', audioPlaylist, remainingMs: display.pausingRemainingMs };
@@ -1442,7 +1469,7 @@ module.exports = {
   renamePlaylist, renameVideo,
   getRotationGroups, createRotationGroup, renameRotationGroup, deleteRotationGroup,
   setGroupSteps, setGroupEnabled, restartGroupCycle, setStepMandatory, getAllGroupStatuses,
-  setGroupSchedule, setGroupMode, setGroupCycle, setGroupPausePlaylist,
+  setGroupSchedule, setGroupMode, setGroupCycle, setGroupPausePlaylist, setGroupWindow,
   getPlaylistGroups, createPlaylistGroup, renamePlaylistGroup, deletePlaylistGroup, setPlaylistGroupMembers,
   getBrowserLinks, getBrowserLink, createBrowserLink, deleteBrowserLink, setBrowserLinkPortrait,
   checkOrRequestApproval, getApprovalStatus, getPendingApprovals, resolveApproval
