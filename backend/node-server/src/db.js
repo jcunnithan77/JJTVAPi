@@ -140,6 +140,13 @@ async function initDb() {
   // Some sites are mobile/portrait-only and render broken (or blank) on a landscape TV
   // screen; when set, the app renders that link's WebView rotated 90° to compensate.
   try { await db.exec(`ALTER TABLE browser_links ADD COLUMN force_portrait INTEGER DEFAULT 0`); } catch(e) {}
+  // A simple timed kiosk session: 0 = no limit (default), -1 = instant lock (closes right
+  // away instead of ever opening - a quick kill switch without deleting the link), N = auto-
+  // closes back to the TV app N minutes after opening. single_page, when set, blocks ANY
+  // navigation away from the exact starting URL (no domain-approval flow at all) - for a
+  // link meant to show one fixed page and nothing else.
+  try { await db.exec(`ALTER TABLE browser_links ADD COLUMN lock_minutes INTEGER DEFAULT 0`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE browser_links ADD COLUMN single_page INTEGER DEFAULT 0`); } catch(e) {}
   // A rotation step can target either a single playlist (default, unchanged) or a
   // Playlist Group (all of the group's playlists become available together while active).
   try { await db.exec(`ALTER TABLE rotation_steps ADD COLUMN target_type TEXT DEFAULT 'playlist'`); } catch(e) {}
@@ -742,13 +749,13 @@ async function getBrowserLink(linkId) {
   return { ...link, approvedDomains: domains.map(d => d.domain) };
 }
 
-async function createBrowserLink(name, url, thumbnail, groupName, forcePortrait) {
+async function createBrowserLink(name, url, thumbnail, groupName, forcePortrait, lockMinutes, singlePage) {
   const db = await getDb();
   const domain = _domainOf(url);
   if (!domain) throw new Error('Invalid URL');
   const result = await db.run(
-    `INSERT INTO browser_links (name, url, domain, thumbnail, group_name, force_portrait) VALUES (?, ?, ?, ?, ?, ?)`,
-    [name, url, domain, thumbnail || null, groupName || null, forcePortrait ? 1 : 0]
+    `INSERT INTO browser_links (name, url, domain, thumbnail, group_name, force_portrait, lock_minutes, single_page) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name, url, domain, thumbnail || null, groupName || null, forcePortrait ? 1 : 0, lockMinutes || 0, singlePage ? 1 : 0]
   );
   await db.run(
     `INSERT OR IGNORE INTO browser_approved_domains (link_id, domain) VALUES (?, ?)`,
@@ -760,6 +767,16 @@ async function createBrowserLink(name, url, thumbnail, groupName, forcePortrait)
 async function setBrowserLinkPortrait(linkId, forcePortrait) {
   const db = await getDb();
   await db.run(`UPDATE browser_links SET force_portrait = ? WHERE id = ?`, [forcePortrait ? 1 : 0, linkId]);
+}
+
+async function setBrowserLinkLock(linkId, lockMinutes) {
+  const db = await getDb();
+  await db.run(`UPDATE browser_links SET lock_minutes = ? WHERE id = ?`, [lockMinutes || 0, linkId]);
+}
+
+async function setBrowserLinkSinglePage(linkId, singlePage) {
+  const db = await getDb();
+  await db.run(`UPDATE browser_links SET single_page = ? WHERE id = ?`, [singlePage ? 1 : 0, linkId]);
 }
 
 async function deleteBrowserLink(linkId) {
@@ -1648,6 +1665,7 @@ module.exports = {
   setGroupSchedule, setGroupMode, setGroupCycle, setGroupPausePlaylist, setGroupWindow,
   getPlaylistGroups, createPlaylistGroup, renamePlaylistGroup, deletePlaylistGroup, setPlaylistGroupMembers,
   getBrowserLinks, getBrowserLink, createBrowserLink, deleteBrowserLink, setBrowserLinkPortrait,
+  setBrowserLinkLock, setBrowserLinkSinglePage,
   checkOrRequestApproval, getApprovalStatus, getPendingApprovals, resolveApproval
 };
 

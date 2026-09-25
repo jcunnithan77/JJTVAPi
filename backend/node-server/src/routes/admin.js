@@ -305,11 +305,11 @@ router.get('/admin-api/browser-links', async (req, res) => {
 });
 
 router.post('/admin-api/browser-links', async (req, res) => {
-  const { name, url, thumbnail, group_name, force_portrait } = req.body || {};
+  const { name, url, thumbnail, group_name, force_portrait, lock_minutes, single_page } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
   if (!url || !url.trim()) return res.status(400).json({ error: 'url is required' });
   try {
-    const id = await db.createBrowserLink(name.trim(), url.trim(), thumbnail || '', (group_name || '').trim() || null, !!force_portrait);
+    const id = await db.createBrowserLink(name.trim(), url.trim(), thumbnail || '', (group_name || '').trim() || null, !!force_portrait, parseInt(lock_minutes || 0), !!single_page);
     await triggerTvReload();
     res.json({ success: true, id });
   } catch (e) {
@@ -320,6 +320,20 @@ router.post('/admin-api/browser-links', async (req, res) => {
 router.post('/admin-api/browser-links/:id/portrait', async (req, res) => {
   const { force_portrait } = req.body || {};
   await db.setBrowserLinkPortrait(parseInt(req.params.id), !!force_portrait);
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
+router.post('/admin-api/browser-links/:id/lock', async (req, res) => {
+  const { lock_minutes } = req.body || {};
+  await db.setBrowserLinkLock(parseInt(req.params.id), parseInt(lock_minutes || 0));
+  await triggerTvReload();
+  res.json({ success: true });
+});
+
+router.post('/admin-api/browser-links/:id/single-page', async (req, res) => {
+  const { single_page } = req.body || {};
+  await db.setBrowserLinkSinglePage(parseInt(req.params.id), !!single_page);
   await triggerTvReload();
   res.json({ success: true });
 });

@@ -143,7 +143,7 @@ router.get('/api/browser-links', async (req, res) => {
   if (await db.isSystemAsleep()) return res.json([]);
   try {
     const links = await db.getBrowserLinks();
-    res.json(links.map(l => ({ id: l.id, name: l.name, url: l.url, thumbnail: l.thumbnail, group_name: l.group_name, force_portrait: l.force_portrait === 1 })));
+    res.json(links.map(l => ({ id: l.id, name: l.name, url: l.url, thumbnail: l.thumbnail, group_name: l.group_name, force_portrait: l.force_portrait === 1, lock_minutes: l.lock_minutes || 0, single_page: l.single_page === 1 })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
